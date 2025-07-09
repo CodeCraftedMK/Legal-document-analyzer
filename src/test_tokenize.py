@@ -1,7 +1,7 @@
 import os, json, torch
 from transformers import AutoTokenizer
 
-TOK_DIR = "data/tokenized"
+TOK_DIR = "./data/tokenized/"
 REQ = ["input_ids.pt", "attention_masks.pt", "labels.pt", "metadata.json"]
 
 def test():
@@ -22,7 +22,7 @@ def test():
     tok = AutoTokenizer.from_pretrained(meta["model_name"])
     print(f"✅ {ids.size(0)} samples, each 512 tokens")
     print(f"🏷️  Labels: {meta['unique_labels']}")
-    print(f"📊 Distribution: {meta['label_distribution']}")
+    print(f"📊 Distribution: {meta['label_length_distribution']}")
     print("🔍 First 20 tokens of sample 0:", tok.convert_ids_to_tokens(ids[0][:20]))
 
 if __name__ == "__main__":
