@@ -10,7 +10,7 @@ BATCH_SIZE = 32
 class LegalBertTokenizer:
     def __init__(self):
         self.tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
-        print(f"✅ Tokenizer loaded: {MODEL_NAME}")
+        print(f"Tokenizer loaded: {MODEL_NAME}")
 
     def parse_labels(self, label_str):
         """Parse string representation of list into actual list"""
@@ -85,8 +85,8 @@ class LegalBertTokenizer:
         with open(os.path.join(out_dir, "metadata.json"), "w") as f:
             json.dump(meta, f, indent=2)
             
-        print(f"✅ Saved tokenized tensors & metadata to {out_dir}")
-        print(f"📊 Label statistics:")
+        print(f"Saved tokenized tensors & metadata to {out_dir}")
+        print("Label statistics:")
         print(f"   - Total samples: {len(df)}")
         print(f"   - Empty labels: {meta['empty_label_count']}")
         print(f"   - Unique labels found: {len(unique_labels)}")

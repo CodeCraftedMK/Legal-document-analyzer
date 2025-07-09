@@ -21,13 +21,13 @@ class LegalBertEvaluator:
         self.results_dir = results_dir
         os.makedirs(self.results_dir, exist_ok=True)
         
-        print(f"🔄 Initializing LegalBertEvaluator...")
-        print(f"📂 Splits directory: {splits_dir}")
-        print(f"📂 Results directory: {results_dir}")
+        print("Initializing LegalBertEvaluator...")
+        print(f"Splits directory: {splits_dir}")
+        print(f"Results directory: {results_dir}")
     
     def load_ground_truth(self, split_name: str = "test") -> Dict:
         """Load ground truth labels from test split"""
-        print(f"📥 Loading ground truth from {split_name} split...")
+        print(f"Loading ground truth from {split_name} split...")
         
         # Load manifest to get true labels
         manifest_path = os.path.join(self.splits_dir, f"{split_name}_manifest.jsonl")
@@ -43,7 +43,7 @@ class LegalBertEvaluator:
                 ground_truth.append(entry['label'])
                 sample_ids.append(entry['id'])
         
-        print(f"✅ Loaded {len(ground_truth)} ground truth labels")
+        print(f"Loaded {len(ground_truth)} ground truth labels")
         
         return {
             'labels': np.array(ground_truth),
@@ -53,7 +53,7 @@ class LegalBertEvaluator:
     
     def load_predictions(self, predictions_file: str) -> Dict:
         """Load model predictions from file"""
-        print(f"📥 Loading predictions from {predictions_file}...")
+        print(f"Loading predictions from {predictions_file}...")
         
         if not os.path.exists(predictions_file):
             raise FileNotFoundError(f"Predictions file not found: {predictions_file}")
@@ -88,7 +88,7 @@ class LegalBertEvaluator:
         else:
             raise ValueError(f"Unsupported file format: {predictions_file}")
         
-        print(f"✅ Loaded {len(predictions)} predictions")
+        print(f"Loaded {len(predictions)} predictions")
         
         return {
             'predictions': predictions,
@@ -98,11 +98,11 @@ class LegalBertEvaluator:
     def compute_metrics(self, y_true: np.ndarray, y_pred: np.ndarray, 
                        class_names: Optional[List[str]] = None) -> Dict:
         """Compute comprehensive classification metrics"""
-        print("📊 Computing classification metrics...")
+        print("Computing classification metrics...")
         
         # Handle edge case of single sample
         if len(y_true) == 1:
-            print("⚠️ Single sample evaluation - limited metrics available")
+            print("Single sample evaluation - limited metrics available")
             accuracy = accuracy_score(y_true, y_pred)
             
             # For single sample, precision/recall are either 1 or 0
@@ -175,7 +175,7 @@ class LegalBertEvaluator:
                     'support': int(support[i])
                 }
         
-        print(f"✅ Computed metrics - Accuracy: {accuracy:.3f}, Macro F1: {f1_macro:.3f}")
+        print(f"Computed metrics - Accuracy: {accuracy:.3f}, Macro F1: {f1_macro:.3f}")
         
         return results
     
@@ -193,7 +193,7 @@ class LegalBertEvaluator:
     def save_results(self, results: Dict, predictions_info: Dict, ground_truth_info: Dict, 
                     prefix: str = "evaluation") -> str:
         """Save evaluation results to files"""
-        print("💾 Saving evaluation results...")
+        print("Saving evaluation results...")
         
         # Add metadata
         results['metadata'] = {
@@ -273,31 +273,31 @@ class LegalBertEvaluator:
             f.write(f"Evaluation date: {results['metadata']['evaluation_date']}\n\n")
             f.write(report)
         
-        print(f"✅ Results saved:")
-        print(f"   📊 JSON: {json_path}")
-        print(f"   📈 CSV: {csv_path}")
-        print(f"   📋 Report: {report_path}")
+        print("Results saved:")
+        print(f"   JSON: {json_path}")
+        print(f"   CSV: {csv_path}")
+        print(f"   Report: {report_path}")
         
         return json_path
     
     def print_summary(self, results: Dict):
         """Print a summary of evaluation results"""
         print("\n" + "="*50)
-        print("📊 EVALUATION SUMMARY")
+        print("EVALUATION SUMMARY")
         print("="*50)
         
         if results.get('single_sample_evaluation', False):
-            print(f"⚠️ Single Sample Evaluation")
-            print(f"🎯 Accuracy: {results['accuracy']:.3f}")
-            print(f"✅ Correct: {results['correct_prediction']}")
-            print(f"📌 True Label: {results['true_label']}")
-            print(f"📌 Predicted Label: {results['predicted_label']}")
+            print("Single Sample Evaluation")
+            print(f"Accuracy: {results['accuracy']:.3f}")
+            print(f"Correct: {results['correct_prediction']}")
+            print(f"True Label: {results['true_label']}")
+            print(f"Predicted Label: {results['predicted_label']}")
         else:
-            print(f"🎯 Overall Accuracy: {results['accuracy']:.3f}")
-            print(f"📈 Macro F1-Score: {results['macro_avg']['f1_score']:.3f}")
-            print(f"📉 Micro F1-Score: {results['micro_avg']['f1_score']:.3f}")
+            print(f"Overall Accuracy: {results['accuracy']:.3f}")
+            print(f"Macro F1-Score: {results['macro_avg']['f1_score']:.3f}")
+            print(f"Micro F1-Score: {results['micro_avg']['f1_score']:.3f}")
             
-            print(f"\n📋 Per-Class Performance:")
+            print(f"\nPer-Class Performance:")
             for class_name, metrics in results.get('per_class', {}).items():
                 print(f"   {class_name}:")
                 print(f"     Precision: {metrics['precision']:.3f}")
@@ -309,7 +309,7 @@ class LegalBertEvaluator:
 
 def create_dummy_predictions(split_name: str = "test", splits_dir: str = "data/splits") -> str:
     """Create dummy predictions for testing (simulates Arslan's model output)"""
-    print(f"🤖 Creating dummy predictions for {split_name} split...")
+    print(f"Creating dummy predictions for {split_name} split...")
     
     # Load ground truth to get the right number of samples
     manifest_path = os.path.join(splits_dir, f"{split_name}_manifest.jsonl")
@@ -343,12 +343,12 @@ def create_dummy_predictions(split_name: str = "test", splits_dir: str = "data/s
     })
     df.to_csv(predictions_file, index=False)
     
-    print(f"✅ Dummy predictions saved to {predictions_file}")
+    print(f"Dummy predictions saved to {predictions_file}")
     return predictions_file
 
 def main():
     """Main function to demonstrate evaluation metrics"""
-    print("🚀 LEGAL-BERT Evaluation Metrics - Muhammad Abdullah Khan")
+    print("LEGAL-BERT Evaluation Metrics - Muhammad Abdullah Khan")
     
     # Initialize evaluator
     evaluator = LegalBertEvaluator()
@@ -374,7 +374,7 @@ def main():
     # Print summary
     evaluator.print_summary(results)
     
-    print(f"\n✅ Evaluation complete! Results saved to {evaluator.results_dir}/")
+    print(f"\nEvaluation complete! Results saved to {evaluator.results_dir}/")
 
 if __name__ == "__main__":
     main() 

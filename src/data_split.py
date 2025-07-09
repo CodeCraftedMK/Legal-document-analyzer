@@ -18,13 +18,13 @@ class LegalDataSplitter:
         np.random.seed(self.seed)
         torch.manual_seed(self.seed)
         
-        print(f"🔄 Initializing LegalDataSplitter...")
-        print(f"📂 Tokenized data: {tokenized_dir}")
-        print(f"📂 Splits output: {splits_dir}")
+        print("Initializing LegalDataSplitter...")
+        print(f"Tokenized data: {tokenized_dir}")
+        print(f"Splits output: {splits_dir}")
     
     def load_tokenized_data(self):
         """Load tokenized tensors and metadata"""
-        print("📥 Loading tokenized data...")
+        print("Loading tokenized data...")
         
         # Load tensors
         input_ids = torch.load(os.path.join(self.tokenized_dir, "input_ids.pt"))
@@ -35,14 +35,14 @@ class LegalDataSplitter:
         with open(os.path.join(self.tokenized_dir, "metadata.json"), 'r') as f:
             metadata = json.load(f)
         
-        print(f"✅ Loaded {len(input_ids)} samples")
-        print(f"📊 Label distribution: {metadata['label_distribution']}")
+        print(f"Loaded {len(input_ids)} samples")
+        print(f"Label distribution: {metadata['label_distribution']}")
         
         return input_ids, attention_masks, labels, metadata
     
     def create_splits(self, input_ids, attention_masks, labels, train_size=0.8, val_size=0.1, test_size=0.1):
         """Split data into train/val/test with simple random splitting for small datasets"""
-        print(f"🔀 Creating splits: train={train_size:.0%}, val={val_size:.0%}, test={test_size:.0%}")
+        print(f"Creating splits: train={train_size:.0%}, val={val_size:.0%}, test={test_size:.0%}")
         
         # Verify split ratios sum to 1.0
         assert abs(train_size + val_size + test_size - 1.0) < 1e-6, "Split ratios must sum to 1.0"
@@ -52,8 +52,8 @@ class LegalDataSplitter:
         indices = np.arange(len(labels_np))
         total_samples = len(labels_np)
         
-        print(f"📊 Dataset: {total_samples} samples")
-        print("⚠️  Using simple random splitting for small dataset")
+        print(f"Dataset: {total_samples} samples")
+        print("Using simple random splitting for small dataset")
         
         # Calculate actual split sizes
         test_samples = max(1, int(total_samples * test_size))
@@ -96,13 +96,13 @@ class LegalDataSplitter:
         # Print split statistics
         for split_name, split_data in splits.items():
             label_counts = Counter(split_data['labels'].numpy())
-            print(f"📈 {split_name.upper()}: {len(split_data['indices'])} samples, labels: {dict(label_counts)}")
+            print(f"{split_name.upper()}: {len(split_data['indices'])} samples, labels: {dict(label_counts)}")
         
         return splits
     
     def save_split_tensors(self, splits):
         """Save tensor data for each split"""
-        print("💾 Saving split tensors...")
+        print("Saving split tensors...")
         
         os.makedirs(self.splits_dir, exist_ok=True)
         
@@ -115,11 +115,11 @@ class LegalDataSplitter:
             torch.save(split_data['attention_masks'], os.path.join(split_dir, 'attention_masks.pt'))
             torch.save(split_data['labels'], os.path.join(split_dir, 'labels.pt'))
             
-            print(f"✅ Saved {split_name} tensors to {split_dir}")
+            print(f"Saved {split_name} tensors to {split_dir}")
     
     def create_manifests(self, splits, metadata):
         """Create manifest files for each split"""
-        print("📝 Creating manifest files...")
+        print("Creating manifest files...")
         
         for split_name, split_data in splits.items():
             manifest_path = os.path.join(self.splits_dir, f"{split_name}_manifest.jsonl")
@@ -135,7 +135,7 @@ class LegalDataSplitter:
                     }
                     f.write(json.dumps(manifest_entry) + '\n')
             
-            print(f"✅ Created manifest: {manifest_path}")
+            print(f"Created manifest: {manifest_path}")
     
     def save_split_metadata(self, splits, original_metadata):
         """Save metadata for splits"""
@@ -156,12 +156,12 @@ class LegalDataSplitter:
         with open(metadata_path, 'w') as f:
             json.dump(split_metadata, f, indent=2)
         
-        print(f"✅ Saved split metadata: {metadata_path}")
+        print(f"Saved split metadata: {metadata_path}")
         return split_metadata
     
     def validate_splits(self, splits):
         """Validate that splits have no overlap and correct properties"""
-        print("🔍 Validating splits...")
+        print("Validating splits...")
         
         all_indices = set()
         total_samples = 0
@@ -183,12 +183,12 @@ class LegalDataSplitter:
             assert split_data['labels'].shape[0] == n_samples
             assert split_data['input_ids'].shape[1] == 512  # LEGAL-BERT max length
         
-        print(f"✅ Validation passed: {total_samples} total samples, no overlaps")
+        print(f"Validation passed: {total_samples} total samples, no overlaps")
         return True
 
 def main():
     """Main function to create data splits"""
-    print("🚀 Starting data splitting for Muhammad Abdullah Khan...")
+    print("Starting data splitting for Muhammad Abdullah Khan...")
     
     # Initialize splitter
     splitter = LegalDataSplitter()
@@ -211,8 +211,8 @@ def main():
     # Save metadata
     split_metadata = splitter.save_split_metadata(splits, metadata)
     
-    print("\n✅ Data splitting complete!")
-    print(f"📊 Final split sizes:")
+    print("\nData splitting complete!")
+    print(f"Final split sizes:")
     for split_name, split_info in split_metadata['splits'].items():
         print(f"   {split_name.upper()}: {split_info['size']} samples")
     

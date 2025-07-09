@@ -24,7 +24,7 @@ class LegalBertDataset(Dataset):
         self.attention_masks = torch.load(os.path.join(split_dir, 'attention_masks.pt'))
         self.labels = torch.load(os.path.join(split_dir, 'labels.pt'))
         
-        print(f"✅ Loaded {len(self.samples)} samples from {manifest_path}")
+        print(f"Loaded {len(self.samples)} samples from {manifest_path}")
     
     def __len__(self):
         return len(self.samples)
@@ -57,7 +57,7 @@ class LegalDataLoaderFactory:
         with open(metadata_path, 'r') as f:
             self.metadata = json.load(f)
         
-        print(f"📊 Loaded splits metadata: {self.metadata['total_samples']} total samples")
+        print(f"Loaded splits metadata: {self.metadata['total_samples']} total samples")
         for split_name, split_info in self.metadata['splits'].items():
             print(f"   {split_name.upper()}: {split_info['size']} samples")
     
@@ -97,7 +97,7 @@ class LegalDataLoaderFactory:
             try:
                 loaders[split_name] = self.get_dataloader(split_name, batch_size)
             except FileNotFoundError:
-                print(f"⚠️ Split '{split_name}' not found, skipping...")
+                print(f"Error loading {split_name.upper()}: FileNotFoundError")
         
         return loaders
     
@@ -110,7 +110,7 @@ class LegalDataLoaderFactory:
         dataset = self.get_dataset(split_name)
         sample = dataset[sample_idx]
         
-        print(f"\n🔍 Sample from {split_name} split (index {sample_idx}):")
+        print(f"\nSample from {split_name} split (index {sample_idx}):")
         print(f"   ID: {sample['id']}")
         print(f"   Original index: {sample['original_index']}")
         print(f"   Label: {sample['labels'].item()}")
@@ -120,7 +120,7 @@ class LegalDataLoaderFactory:
 
 def test_data_loaders():
     """Test function to validate data loaders work correctly"""
-    print("🧪 Testing data loaders...")
+    print("\nTesting data loaders...")
     
     # Initialize factory
     factory = LegalDataLoaderFactory()
@@ -129,7 +129,7 @@ def test_data_loaders():
     for split_name in ['train', 'val', 'test']:
         try:
             dataset = factory.get_dataset(split_name)
-            print(f"✅ {split_name.upper()} dataset: {len(dataset)} samples")
+            print(f"{split_name.upper()} dataset: {len(dataset)} samples")
             
             # Test getting a sample
             if len(dataset) > 0:
@@ -140,14 +140,14 @@ def test_data_loaders():
                 print(f"   Sample 0 - Label: {sample['labels'].item()}, Shape: {sample['input_ids'].shape}")
         
         except FileNotFoundError as e:
-            print(f"❌ {split_name.upper()}: {e}")
+            print(f"Error in {split_name.upper()}: {e}")
     
     # Test data loaders
-    print("\n🔄 Testing data loaders...")
+    print("\nTesting data loaders...")
     loaders = factory.get_all_dataloaders(batch_size=2)
     
     for split_name, loader in loaders.items():
-        print(f"✅ {split_name.upper()} loader: {len(loader)} batches")
+        print(f"{split_name.upper()} loader: {len(loader)} batches")
         
         # Test one batch
         for batch in loader:
@@ -157,17 +157,17 @@ def test_data_loaders():
     # Print a sample
     factory.print_sample('train', 0)
     
-    print("\n✅ All data loader tests passed!")
+    print("\nAll data loader tests passed!")
 
 def main():
     """Main function to demonstrate data loader usage"""
-    print("🚀 LEGAL-BERT Data Loader Interface - Muhammad Abdullah Khan")
+    print("LEGAL-BERT Data Loader Interface - Muhammad Abdullah Khan")
     
     # Test the data loaders
     test_data_loaders()
     
     # Show usage example
-    print("\n📖 Usage Example:")
+    print("\nUsage Example:")
     print("```python")
     print("from src.data_loader import LegalDataLoaderFactory")
     print("")
