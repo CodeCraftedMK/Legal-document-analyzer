@@ -7,7 +7,7 @@ A 4-day sprint project to build a legal document classifier using LEGAL-BERT.
 - **Member B**: Repo structure, visualizations, logging
 - **Muhammad Abdullah Khan**: Dataset & tokenization pipeline, data splitting, evaluation metrics
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Environment Setup
 1. Create virtual environment:
@@ -30,7 +30,7 @@ A 4-day sprint project to build a legal document classifier using LEGAL-BERT.
 python src/test_legal_bert.py
 ```
 
-## 📁 Project Structure
+##  Project Structure
 
 ```
 ├── src/
@@ -51,9 +51,9 @@ python src/test_legal_bert.py
 └── requirements.txt         # Python dependencies
 ```
 
-## 🔄 Workflow
+## Workflow
 
-### Day 1 & 2: Data Preparation (Muhammad Abdullah Khan)
+### Data Preparation (Muhammad Abdullah Khan)
 
 1. **Test LEGAL-BERT Setup**:
    ```bash
@@ -70,7 +70,7 @@ python src/test_legal_bert.py
    python src/test_tokenize.py
    ```
 
-### Day 3: Data Splitting (Muhammad Abdullah Khan)
+### Data Splitting (Muhammad Abdullah Khan)
 
 4. **Create Train/Val/Test Splits**:
    ```bash
@@ -82,14 +82,14 @@ python src/test_legal_bert.py
    python src/data_loader.py
    ```
 
-### Day 4: Evaluation (Muhammad Abdullah Khan)
+### Evaluation (Muhammad Abdullah Khan)
 
 6. **Evaluate Model** (after Arslan provides predictions):
    ```bash
    python src/evaluate_metrics.py
    ```
 
-## 📊 Components
+##  Components
 
 ### 1. Tokenization Pipeline (`legal_tokenizer.py`)
 - Loads LEGAL-BERT tokenizer (`nlpaueb/legal-bert-base-uncased`)
@@ -149,7 +149,7 @@ predictions = evaluator.load_predictions("predictions.csv")
 results = evaluator.compute_metrics(ground_truth['labels'], predictions['predictions'])
 ```
 
-## 🎯 Key Features
+## Key Features
 
 ### Data Pipeline
 - **Robust Error Handling**: Graceful handling of missing files, columns, or edge cases
@@ -171,7 +171,7 @@ results = evaluator.compute_metrics(ground_truth['labels'], predictions['predict
 
 ## 📈 Status
 
-### ✅ Completed (Muhammad Abdullah Khan)
+### Completed (Muhammad Abdullah Khan)
 - [x] Environment setup and LEGAL-BERT validation
 - [x] Tokenization pipeline with batch processing
 - [x] Data splitting with stratification and manifests
@@ -179,18 +179,18 @@ results = evaluator.compute_metrics(ground_truth['labels'], predictions['predict
 - [x] Comprehensive evaluation metrics
 - [x] Documentation and testing
 
-### 🔄 In Progress (Team)
+### In Progress (Team)
 - [ ] Data preprocessing (Arslan)
 - [ ] Model training (Arslan)
 - [ ] Visualizations and logging (Member B)
 - [ ] Final presentation preparation
 
-### 📋 Dependencies
+### Dependencies
 - Muhammad's work is **complete and ready**
 - Waiting for Arslan's cleaned data (`data/processed/cleaned_legal_documents.csv`)
 - Waiting for Arslan's model predictions for final evaluation
 
-## 🛠 Troubleshooting
+## Troubleshooting
 
 ### Common Issues
 
