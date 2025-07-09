@@ -50,7 +50,7 @@ Once Arslan provides the cleaned data in `data/processed/cleaned_legal_documents
 
 ```bash
 # Run tokenization
-python src/tokenize.py
+python src/legal_tokenizer.py
 
 # Test tokenization output
 python src/test_tokenize.py
@@ -75,6 +75,6 @@ data/tokenized/
 ## Quick End-to-End Smoke Test
 ```bash
 python src/test_legal_bert.py
-python src/tokenize.py
+python src/legal_tokenizer.py
 python src/test_tokenize.py
 ``` 
