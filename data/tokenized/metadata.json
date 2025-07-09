@@ -2,16 +2,7 @@
   "num_samples": 1607,
   "max_length": 512,
   "model_name": "nlpaueb/legal-bert-base-uncased",
-  "unique_labels": [
-    0,
-    1,
-    2,
-    3,
-    4,
-    5,
-    6,
-    7
-  ],
+  "unique_labels": [0, 1, 2, 3, 4, 5, 6, 7],
   "label_length_distribution": {
     "0": 1449,
     "1": 158
