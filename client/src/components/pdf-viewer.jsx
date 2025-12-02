@@ -1,17 +1,17 @@
-import { useState, useEffect, useRef } from "react";
-import * as pdfjsLib from "pdfjs-dist";
-import { Util } from "pdfjs-dist";
+import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  ZoomIn,
+  ZoomOut,
+  Maximize,
+  ChevronLeft,
+  ChevronRight,
+  RotateCw,
+  Search,
+  Loader2,
+} from "lucide-react";
 
-// Set up PDF.js worker with local fallback
-try {
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `/node_modules/pdfjs-dist/build/pdf.worker.min.mjs`;
-} catch (error) {
-  console.warn("Failed to set local PDF.js worker, using CDN fallback");
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
-}
-
-// Color scheme for different clause types (by category)
-const getClauseColor = (clauseName) => {
+// Shared utility for colors - exported for use in other components
+export const getClauseColor = (clauseName) => {
   const colorMap = {
     "Document Name": "#FFB347",
     Parties: "#FF6B6B",
@@ -56,11 +56,11 @@ const getClauseColor = (clauseName) => {
     "Third Party Beneficiary": "#00CEC9",
     "O-label": "#E6E6FA",
   };
-  return colorMap[clauseName] || "#FFFF00";
+  return colorMap[clauseName] || "#FFE66D";
 };
 
 // RGBA color helper for translucent highlight backgrounds
-const hexToRgba = (hex, alpha = 0.12) => {
+const hexToRgba = (hex, alpha = 0.25) => {
   try {
     let c = hex.replace("#", "");
     if (c.length === 3)
@@ -73,29 +73,82 @@ const hexToRgba = (hex, alpha = 0.12) => {
     const b = Number.parseInt(c.slice(4, 6), 16);
     return `rgba(${r}, ${g}, ${b}, ${alpha})`;
   } catch {
-    return `rgba(255, 255, 0, ${alpha})`; // fallback to a light yellow
+    return `rgba(255, 230, 109, ${alpha})`; // fallback
   }
 };
 
 export default function PDFViewerWithHighlights({ file, predictedClauses }) {
   const [pdf, setPdf] = useState(null);
+  const [pdfLib, setPdfLib] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(0);
-  const [scale, setScale] = useState(1.2);
-  const [isLoading, setIsLoading] = useState(false);
+  const [scale, setScale] = useState(1.0);
+  const [rotation, setRotation] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [fitToWidth, setFitToWidth] = useState(true);
+
+  const containerRef = useRef(null);
   const canvasRef = useRef(null);
   const highlightLayerRef = useRef(null);
-  const containerRef = useRef(null);
+  const renderTaskRef = useRef(null);
 
-  // Load PDF when file changes
+  // 0. Load PDF.js - try local first, fallback to CDN
   useEffect(() => {
-    if (file && file.type === "application/pdf") {
+    const loadLibrary = async () => {
+      // Try to use local pdfjs-dist first
+      try {
+        const pdfjsModule = await import("pdfjs-dist");
+        const pdfjsLib = pdfjsModule.default || pdfjsModule;
+        
+        // Try to set up local worker
+        try {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = `/node_modules/pdfjs-dist/build/pdf.worker.min.mjs`;
+        } catch {
+          pdfjsLib.GlobalWorkerOptions.workerSrc = `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.js`;
+        }
+        
+        setPdfLib(pdfjsLib);
+        setIsLoading(false);
+        return;
+      } catch (error) {
+        console.warn("Local PDF.js not available, loading from CDN");
+      }
+
+      // Fallback to CDN
+      if (window.pdfjsLib) {
+        setPdfLib(window.pdfjsLib);
+        setIsLoading(false);
+        return;
+      }
+
+      const script = document.createElement("script");
+      script.src = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+      script.async = true;
+      script.onload = () => {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+          "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+        setPdfLib(window.pdfjsLib);
+        setIsLoading(false);
+      };
+      script.onerror = () => {
+        setIsLoading(false);
+        console.error("Failed to load PDF.js from CDN");
+      };
+      document.body.appendChild(script);
+    };
+
+    loadLibrary();
+  }, []);
+
+  // 1. Load PDF Document once lib is ready
+  useEffect(() => {
+    if (file && file.type === "application/pdf" && pdfLib) {
       setIsLoading(true);
       const fileReader = new FileReader();
       fileReader.onload = async function () {
         const typedArray = new Uint8Array(this.result);
         try {
-          const loadingTask = pdfjsLib.getDocument({
+          const loadingTask = pdfLib.getDocument({
             data: typedArray,
             cMapUrl: `/node_modules/pdfjs-dist/cmaps/`,
             cMapPacked: true,
@@ -107,13 +160,13 @@ export default function PDFViewerWithHighlights({ file, predictedClauses }) {
           setCurrentPage(1);
           setIsLoading(false);
         } catch (error) {
-          // fallback to CDN assets
+          // Fallback to CDN assets
           try {
-            const loadingTask = pdfjsLib.getDocument({
+            const loadingTask = pdfLib.getDocument({
               data: typedArray,
-              cMapUrl: `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/cmaps/`,
+              cMapUrl: `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfLib.version}/cmaps/`,
               cMapPacked: true,
-              standardFontDataUrl: `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/standard_fonts/`,
+              standardFontDataUrl: `//cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfLib.version}/standard_fonts/`,
             });
             const loadedPdf = await loadingTask.promise;
             setPdf(loadedPdf);
@@ -121,6 +174,7 @@ export default function PDFViewerWithHighlights({ file, predictedClauses }) {
             setCurrentPage(1);
             setIsLoading(false);
           } catch (altError) {
+            console.error("PDF Load Error:", altError);
             setTotalPages(0);
             setPdf(null);
             setIsLoading(false);
@@ -134,90 +188,111 @@ export default function PDFViewerWithHighlights({ file, predictedClauses }) {
       };
       fileReader.readAsArrayBuffer(file);
     } else {
-      setPdf(null);
-      setTotalPages(0);
-      setCurrentPage(1);
-      setIsLoading(false);
+      if (!file) {
+        setPdf(null);
+        setIsLoading(false);
+      }
+      if (file && !pdfLib) {
+        setIsLoading(true);
+      }
     }
-  }, [file]);
+  }, [file, pdfLib]);
 
-  // Render current page
-  useEffect(() => {
-    if (pdf && currentPage && !isLoading) {
-      renderPage();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pdf, currentPage, scale]);
+  // 2. Responsive Scaling Logic
+  const updateScaleToFit = useCallback(async () => {
+    if (!pdf || !containerRef.current || !fitToWidth) return;
 
-  // Render highlights when predictedClauses change
-  useEffect(() => {
-    if (predictedClauses && pdf && !isLoading) {
-      setTimeout(() => renderHighlights(), 100);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [predictedClauses, currentPage, scale, isLoading]);
-
-  const renderPage = async () => {
-    if (
-      !pdf ||
-      !canvasRef.current ||
-      currentPage < 1 ||
-      currentPage > totalPages
-    ) {
-      return;
-    }
     try {
       const page = await pdf.getPage(currentPage);
-      const viewport = page.getViewport({ scale });
+      const unscaledViewport = page.getViewport({ scale: 1, rotation });
+      const containerWidth = containerRef.current.clientWidth - 48; // -48 for padding
+      const newScale = containerWidth / unscaledViewport.width;
+      setScale(newScale);
+    } catch (e) {
+      console.error("Scaling error:", e);
+    }
+  }, [pdf, currentPage, fitToWidth, rotation]);
+
+  // Resize Observer
+  useEffect(() => {
+    if (!containerRef.current || !fitToWidth) return;
+    const observer = new ResizeObserver(() => {
+      requestAnimationFrame(() => updateScaleToFit());
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, [updateScaleToFit, fitToWidth]);
+
+  // 3. Render Page & Highlights
+  const renderPage = useCallback(async () => {
+    if (!pdf || !canvasRef.current || !pdfLib) return;
+
+    if (renderTaskRef.current) {
+      renderTaskRef.current.cancel();
+    }
+
+    try {
+      const page = await pdf.getPage(currentPage);
+      const viewport = page.getViewport({ scale, rotation });
 
       const canvas = canvasRef.current;
       const context = canvas.getContext("2d");
 
-      canvas.height = viewport.height;
-      canvas.width = viewport.width;
-      context.clearRect(0, 0, canvas.width, canvas.height);
+      const outputScale = window.devicePixelRatio || 1;
+      canvas.width = Math.floor(viewport.width * outputScale);
+      canvas.height = Math.floor(viewport.height * outputScale);
 
-      const renderContext = { canvasContext: context, viewport };
-      await page.render(renderContext).promise;
+      canvas.style.width = `${Math.floor(viewport.width)}px`;
+      canvas.style.height = `${Math.floor(viewport.height)}px`;
+
+      const transform =
+        outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : null;
+
+      const renderContext = {
+        canvasContext: context,
+        viewport,
+        transform,
+      };
+
+      renderTaskRef.current = page.render(renderContext);
+      await renderTaskRef.current.promise;
 
       if (highlightLayerRef.current) {
-        highlightLayerRef.current.style.width = `${viewport.width}px`;
-        highlightLayerRef.current.style.height = `${viewport.height}px`;
+        highlightLayerRef.current.style.width = `${Math.floor(viewport.width)}px`;
+        highlightLayerRef.current.style.height = `${Math.floor(viewport.height)}px`;
       }
+
+      renderHighlights(page, viewport);
     } catch (error) {
-      // noop
+      if (error.name !== "RenderingCancelledException") {
+        console.error("Render Error:", error);
+      }
     }
-  };
+  }, [pdf, currentPage, scale, rotation, pdfLib]);
 
-  const renderHighlights = async () => {
-    if (!pdf || !predictedClauses || !highlightLayerRef.current) return;
-
-    try {
-      const page = await pdf.getPage(currentPage);
-      const viewport = page.getViewport({ scale });
-      const textContent = await page.getTextContent();
-
-      // Clear previous highlights
-      highlightLayerRef.current.innerHTML = "";
-
-      // Iterate over predicted clauses (array of { clause_no, category, clause })
-      predictedClauses.forEach((item) => {
-        const clauseName = item?.category || "Unknown";
-        const color = getClauseColor(clauseName);
-        const text = item?.clause || "";
-        if (!text) return;
-
-        highlightTextInPage(
-          text,
-          color,
-          textContent.items,
-          viewport,
-          clauseName
-        );
-      });
-    } catch (error) {
-      // noop
+  useEffect(() => {
+    if (pdf && !isLoading && pdfLib) {
+      renderPage();
     }
+  }, [pdf, currentPage, scale, rotation, isLoading, pdfLib, renderPage]);
+
+  // 4. Improved Highlight Logic with sophisticated text matching
+  const renderHighlights = async (page, viewport) => {
+    if (!predictedClauses || !highlightLayerRef.current || !pdfLib) return;
+
+    highlightLayerRef.current.innerHTML = "";
+
+    const textContent = await page.getTextContent();
+
+    // Iterate over predicted clauses
+    predictedClauses.forEach((item) => {
+      const clauseName = item?.category || "Unknown";
+      const color = getClauseColor(clauseName);
+      const searchText = item?.clause || "";
+      if (!searchText || searchText.length < 3) return;
+
+      highlightTextInPage(searchText, color, textContent.items, viewport, clauseName, pdfLib);
+    });
   };
 
   const highlightTextInPage = (
@@ -225,7 +300,8 @@ export default function PDFViewerWithHighlights({ file, predictedClauses }) {
     color,
     textItems,
     viewport,
-    clauseName
+    clauseName,
+    pdfLib
   ) => {
     if (!searchText || searchText.length < 3) return;
 
@@ -235,16 +311,13 @@ export default function PDFViewerWithHighlights({ file, predictedClauses }) {
       .toLowerCase();
 
     // 2. Build a Global String & Index Map
-    // We create a single long string of the whole page text,
-    // and map every character index back to the specific item it came from.
     let fullPageStr = "";
     const charToItemMap = [];
 
     textItems.forEach((item, itemIndex) => {
       const rawStr = item.str;
-      // We perform the same normalization on the page text
       const cleanStr = rawStr.replace(/\s+/g, "").toLowerCase();
-      
+
       for (let c = 0; c < cleanStr.length; c++) {
         fullPageStr += cleanStr[c];
         charToItemMap.push(itemIndex);
@@ -252,15 +325,15 @@ export default function PDFViewerWithHighlights({ file, predictedClauses }) {
     });
 
     // 3. Find the Target in the Global String
-    // using indexOf allows us to find the exact character start position
     let startIndex = 0;
     const foundIndices = [];
-    
-    // Allow finding multiple occurrences of the same clause on one page
-    while ((startIndex = fullPageStr.indexOf(normalizedTarget, startIndex)) !== -1) {
+
+    while (
+      (startIndex = fullPageStr.indexOf(normalizedTarget, startIndex)) !== -1
+    ) {
       foundIndices.push({
         start: startIndex,
-        end: startIndex + normalizedTarget.length
+        end: startIndex + normalizedTarget.length,
       });
       startIndex += normalizedTarget.length;
     }
@@ -269,9 +342,8 @@ export default function PDFViewerWithHighlights({ file, predictedClauses }) {
 
     // 4. Map Character Indices Back to Items
     const itemsToHighlight = new Set();
-    
+
     foundIndices.forEach(({ start, end }) => {
-      // Loop through the range of characters in the match
       for (let i = start; i < end; i++) {
         const itemIndex = charToItemMap[i];
         if (itemIndex !== undefined) {
@@ -280,121 +352,83 @@ export default function PDFViewerWithHighlights({ file, predictedClauses }) {
       }
     });
 
-    // 5. Draw Highlights (Corrected Coordinates)
+    // 5. Draw Highlights
+    const Util = pdfLib?.Util || window.pdfjsLib?.Util;
+    if (!Util) return;
+
     itemsToHighlight.forEach((item) => {
-      // Check for empty items to avoid drawing 0px boxes
       if (!item.str || !item.str.trim()) return;
 
-      const highlight = document.createElement("div");
+      const transform = Util.transform(viewport.transform, item.transform);
 
-      // Styles
-      const bg = hexToRgba(color, 0.25); // Slightly darker for better visibility
+      const fontHeight = Math.hypot(transform[2], transform[3]);
+      const fontWidth = item.width * viewport.scale;
+
+      const x = transform[4];
+      const yBaseline = transform[5];
+
+      const highlight = document.createElement("div");
+      const bg = hexToRgba(color, 0.25);
       const border = hexToRgba(color, 0.55);
 
       highlight.style.cssText = `
         position: absolute;
         background: ${bg};
-        border-bottom: 2px solid ${border}; /* Underline style is often cleaner */
+        border-bottom: 2px solid ${border};
         border-radius: 2px;
         cursor: pointer;
         z-index: 10;
+        left: ${x}px;
+        top: ${yBaseline - fontHeight}px;
+        width: ${fontWidth}px;
+        height: ${fontHeight}px;
       `;
 
-      // --- COORDINATE FIX ---
-      // viewport.transform is [scaleX, skewY, skewX, scaleY, translateX, translateY]
-      // PDF.js text items are bottom-left origin.
-      // We use the util to convert to [x, y] in Canvas Space (Top-Left origin)
-      const tx = pdfjsLib.Util.transform(
-        viewport.transform,
-        item.transform
-      );
-
-      // tx[5] is the y-coordinate of the text BASELINE.
-      // To highlight the text, we need to go UP from the baseline by the font height.
-      
-      // Calculate font height/width accurately from the transform matrix
-      // hypot(scaleX, skewY) gives the horizontal scaling
-      // hypot(skewX, scaleY) gives the vertical scaling (font height)
-      const fontHeight = Math.hypot(tx[2], tx[3]);
-      const fontWidth = item.width * viewport.scale; // Width is usually safe
-
-      const x = tx[4];
-      const yBaseline = tx[5]; 
-
-      // Position the box
-      // Top = Baseline - Height (Since HTML Y grows downwards)
-      highlight.style.left = `${x}px`;
-      highlight.style.top = `${yBaseline - fontHeight}px`;
-      highlight.style.width = `${fontWidth}px`;
-      highlight.style.height = `${fontHeight}px`;
-
-      // Metadata
       highlight.title = `${clauseName}: "${searchText.slice(0, 50)}..."`;
 
       highlightLayerRef.current.appendChild(highlight);
     });
   };
 
-  const goToPreviousPage = () => {
-    if (currentPage > 1) setCurrentPage(currentPage - 1);
+  // 5. Handlers
+  const handleZoomIn = () => {
+    setFitToWidth(false);
+    setScale((s) => Math.min(s + 0.2, 3.0));
   };
-  const goToNextPage = () => {
-    if (currentPage < totalPages) setCurrentPage(currentPage + 1);
+
+  const handleZoomOut = () => {
+    setFitToWidth(false);
+    setScale((s) => Math.max(s - 0.2, 0.5));
   };
-  const zoomIn = () => setScale((prev) => Math.min(prev + 0.2, 3));
-  const zoomOut = () => setScale((prev) => Math.max(prev - 0.2, 0.5));
-  const resetZoom = () => setScale(1.2);
-  const handlePageInputChange = (e) => {
-    const page = Math.max(
-      1,
-      Math.min(totalPages, Number.parseInt(e.target.value) || 1)
+
+  const handleFitWidth = () => {
+    setFitToWidth(true);
+    updateScaleToFit();
+  };
+
+  const handlePageChange = (e) => {
+    const page = Math.min(
+      Math.max(1, Number.parseInt(e.target.value) || 1),
+      totalPages
     );
     setCurrentPage(page);
   };
 
-  if (!file) {
-    return (
-      <div className="flex items-center justify-center h-64 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
-        <div className="text-center">
-          <div className="text-4xl mb-2">📄</div>
-        </div>
-      </div>
-    );
-  }
-
+  if (!file) return <EmptyState />;
   if (file.type !== "application/pdf") {
     return (
-      <div className="flex items-center justify-center h-64 bg-gray-50 rounded-lg border-2 border-dashed border-gray-300">
-        <div className="text-center">
-          <div className="text-4xl mb-2">⚠️</div>
-          <p className="text-gray-500">
-            PDF highlighting is only available for PDF files
-          </p>
-        </div>
+      <div className="h-full flex flex-col items-center justify-center bg-slate-50 rounded-xl border-2 border-dashed border-slate-200 text-slate-400">
+        <Search size={48} className="mb-4 opacity-50" />
+        <p>PDF highlighting is only available for PDF files</p>
       </div>
     );
   }
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center h-64 bg-gray-50 rounded-lg">
-        <div className="text-center">
-          <div className="animate-spin text-4xl mb-2">🔄</div>
-          <p className="text-gray-500">Loading PDF...</p>
-        </div>
-      </div>
-    );
-  }
-
+  if (isLoading) return <LoadingState />;
   if (totalPages === 0) {
     return (
-      <div className="flex items-center justify-center h-64 bg-gray-50 rounded-lg border-2 border-dashed border-red-300">
-        <div className="text-center">
-          <div className="text-4xl mb-2">❌</div>
-          <p className="text-red-500">
-            Error loading PDF. Please try a different file.
-          </p>
-        </div>
+      <div className="h-full flex flex-col items-center justify-center bg-white rounded-xl border-2 border-dashed border-red-300 text-red-500">
+        <Loader2 size={48} className="mb-4" />
+        <p>Error loading PDF. Please try a different file.</p>
       </div>
     );
   }
@@ -404,98 +438,125 @@ export default function PDFViewerWithHighlights({ file, predictedClauses }) {
     : 0;
 
   return (
-    <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden">
-      <div className="bg-neutral-50/80 px-6 py-3 border-b border-neutral-200">
-        <div className="flex justify-between items-center">
-          <h3 className="text-base font-semibold text-neutral-900 flex items-center">
-            <span className="mr-2">📄</span>
-            PDF Viewer with Highlights
-          </h3>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={zoomOut}
-              disabled={scale <= 0.5}
-              className="px-3 py-1 rounded-md border border-neutral-300 bg-white text-neutral-800 hover:bg-neutral-100 disabled:bg-neutral-200 disabled:text-neutral-500 text-sm transition"
-            >
-              −
-            </button>
-            <button
-              onClick={resetZoom}
-              className="px-3 py-1 rounded-md border border-neutral-300 bg-white text-neutral-800 hover:bg-neutral-100 text-sm transition"
-              title="Reset zoom"
-            >
-              {Math.round(scale * 100)}%
-            </button>
-            <button
-              onClick={zoomIn}
-              disabled={scale >= 3}
-              className="px-3 py-1 rounded-md border border-neutral-300 bg-white text-neutral-800 hover:bg-neutral-100 disabled:bg-neutral-200 disabled:text-neutral-500 text-sm transition"
-            >
-              +
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="p-4">
-        <div
-          ref={containerRef}
-          className="relative border border-neutral-300 rounded-lg overflow-auto bg-neutral-100/60 shadow-inner"
-          style={{ maxHeight: "75vh" }}
-        >
-          <div className="relative inline-block">
-            <canvas
-              ref={canvasRef}
-              className="block bg-white shadow-sm"
-              style={{ maxWidth: "100%" }}
-            />
-            <div
-              ref={highlightLayerRef}
-              className="absolute inset-0 pointer-events-none"
-            />
-          </div>
-        </div>
-
-        <div className="flex justify-between items-center mt-4 bg-neutral-50/80 px-4 py-3 rounded-lg border border-neutral-200">
+    <div className="flex flex-col h-full bg-slate-100 rounded-xl overflow-hidden border border-slate-200 shadow-sm">
+      {/* TOOLBAR */}
+      <div className="h-12 bg-white border-b border-slate-200 flex items-center justify-between px-4 shadow-sm z-10">
+        {/* Page Nav */}
+        <div className="flex items-center gap-2">
           <button
-            onClick={goToPreviousPage}
-            disabled={currentPage <= 1}
-            className="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:bg-neutral-300 disabled:text-neutral-600 disabled:cursor-not-allowed font-medium transition"
+            onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+            disabled={currentPage === 1}
+            className="p-1 hover:bg-slate-100 rounded disabled:opacity-30 transition"
+            title="Previous page"
           >
-            <span className="mr-2">←</span> Previous
+            <ChevronLeft size={18} />
           </button>
-
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-neutral-700">Page</span>
+          <span className="text-sm font-medium text-slate-600">
+            Page{" "}
             <input
               type="number"
+              value={currentPage}
+              onChange={handlePageChange}
+              className="w-10 text-center border rounded mx-1 focus:ring-2 focus:ring-blue-500 outline-none"
               min="1"
               max={totalPages}
-              value={currentPage}
-              onChange={handlePageInputChange}
-              className="w-16 rounded-md border border-neutral-300 bg-white px-2 py-1 text-center text-sm shadow-xs"
-            />
-            <span className="text-sm text-neutral-700">of {totalPages}</span>
-          </div>
-
+            />{" "}
+            / {totalPages}
+          </span>
           <button
-            onClick={goToNextPage}
-            disabled={currentPage >= totalPages}
-            className="inline-flex items-center rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:bg-neutral-300 disabled:text-neutral-600 disabled:cursor-not-allowed font-medium transition"
+            onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+            disabled={currentPage === totalPages}
+            className="p-1 hover:bg-slate-100 rounded disabled:opacity-30 transition"
+            title="Next page"
           >
-            Next <span className="ml-2">→</span>
+            <ChevronRight size={18} />
           </button>
         </div>
 
-        {totalHighlights > 0 && (
-          <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-4 py-2">
-            <p className="text-sm text-blue-800">
-              <span className="font-medium">{totalHighlights}</span> clause
-              {totalHighlights !== 1 ? "s" : ""} highlighted across the document
-            </p>
-          </div>
-        )}
+        {/* Zoom Controls */}
+        <div className="flex items-center gap-2 bg-slate-50 rounded-lg p-1 border border-slate-200">
+          <button
+            onClick={handleZoomOut}
+            className="p-1 hover:bg-white hover:shadow-sm rounded transition"
+            title="Zoom Out"
+          >
+            <ZoomOut size={16} className="text-slate-600" />
+          </button>
+          <span className="text-xs font-mono w-12 text-center text-slate-600">
+            {Math.round(scale * 100)}%
+          </span>
+          <button
+            onClick={handleZoomIn}
+            className="p-1 hover:bg-white hover:shadow-sm rounded transition"
+            title="Zoom In"
+          >
+            <ZoomIn size={16} className="text-slate-600" />
+          </button>
+        </div>
+
+        {/* Tools */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setRotation((r) => (r + 90) % 360)}
+            className="p-2 hover:bg-slate-100 rounded text-slate-600 transition"
+            title="Rotate"
+          >
+            <RotateCw size={18} />
+          </button>
+          <button
+            onClick={handleFitWidth}
+            className={`p-2 rounded transition ${
+              fitToWidth
+                ? "bg-blue-50 text-blue-600"
+                : "hover:bg-slate-100 text-slate-600"
+            }`}
+            title="Fit to Width"
+          >
+            <Maximize size={18} />
+          </button>
+        </div>
       </div>
+
+      {/* VIEWER AREA */}
+      <div
+        className="flex-1 overflow-auto relative p-6 flex justify-center"
+        ref={containerRef}
+      >
+        <div
+          className="relative shadow-lg transition-transform duration-200 ease-out"
+          style={{ width: "fit-content", height: "fit-content" }}
+        >
+          <canvas ref={canvasRef} className="block bg-white rounded-sm" />
+          <div
+            ref={highlightLayerRef}
+            className="absolute inset-0 pointer-events-none"
+          />
+        </div>
+      </div>
+
+      {/* Highlights Info */}
+      {totalHighlights > 0 && (
+        <div className="px-4 py-2 bg-blue-50 border-t border-blue-200">
+          <p className="text-sm text-blue-800">
+            <span className="font-medium">{totalHighlights}</span> clause
+            {totalHighlights !== 1 ? "s" : ""} highlighted across the document
+          </p>
+        </div>
+      )}
     </div>
   );
 }
+
+const EmptyState = () => (
+  <div className="h-full flex flex-col items-center justify-center bg-slate-50 rounded-xl border-2 border-dashed border-slate-200 text-slate-400">
+    <Search size={48} className="mb-4 opacity-50" />
+    <p>No document loaded</p>
+  </div>
+);
+
+const LoadingState = () => (
+  <div className="h-full flex flex-col items-center justify-center bg-white rounded-xl border border-slate-200">
+    <Loader2 size={32} className="animate-spin text-blue-600 mb-3" />
+    <p className="text-sm text-slate-500 font-medium">Rendering PDF...</p>
+  </div>
+);

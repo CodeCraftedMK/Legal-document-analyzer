@@ -1,30 +1,17 @@
+import { getClauseColor } from "./pdf-viewer";
+
 /* new legend that maps predictedClauses categories to colors */
 export default function ClauseLegend({ predictedClauses }) {
   if (!Array.isArray(predictedClauses) || predictedClauses.length === 0)
     return null;
 
-  const clauseColors = [
-    "#FFE4B5",
-    "#E6F3FF",
-    "#F0FFF0",
-    "#FFF0F5",
-    "#F5F5DC",
-    "#E0E6FF",
-    "#FFE4E1",
-    "#F0FFFF",
-    "#FDF5E6",
-    "#F5FFFA",
-  ];
-
-  let colorIndex = 0;
   const clauseColorMap = {};
   const uniqueCategories = [];
 
   predictedClauses.forEach((item) => {
     const name = item?.category || "Unknown";
     if (!(name in clauseColorMap)) {
-      clauseColorMap[name] = clauseColors[colorIndex % clauseColors.length];
-      colorIndex++;
+      clauseColorMap[name] = getClauseColor(name);
       uniqueCategories.push(name);
     }
   });

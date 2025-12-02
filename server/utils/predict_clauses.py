@@ -54,7 +54,7 @@ def predict_clauses(pdf_path):
     import time
     start = time.time()
 
-    print(f"\nProcessing PDF: {pdf_path}")
+    print(f"\\nProcessing PDF: {pdf_path}")
     text = extract_pdf_text(pdf_path)
     print(f"Text extraction done in {round(time.time() - start, 2)}s")
 
@@ -66,12 +66,13 @@ def predict_clauses(pdf_path):
     print(f"Classification done in {round(time.time() - classify_start, 2)}s")
 
     results = [
-        {"clause_no": i+1, "category": categories[i], "clause": clauses[i]}
+        {"clause_no": i + 1, "category": categories[i], "clause": clauses[i]}
         for i in range(len(clauses))
     ]
 
     useful_results = [r for r in results if r["category"] != "Other"]
-    if not useful_results: 
+    serializable_results = []
+    if not useful_results:
         print("No meaningful clauses detected.")
     else:
         print(f"{len(useful_results)} meaningful clauses detected.")
@@ -82,5 +83,5 @@ def predict_clauses(pdf_path):
             print("-" * 70)
         serializable_results = json.loads(json.dumps(useful_results, default=str))
 
-    print(f"✅ Total processing time: {round(time.time() - start, 2)}s\n")
+    print(f"�o. Total processing time: {round(time.time() - start, 2)}s\\n")
     return serializable_results

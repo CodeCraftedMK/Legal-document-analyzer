@@ -1,7 +1,16 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import PDFViewerWithHighlights from "./components/pdf-viewer";
 import ClauseLegend from "./components/clause-legend";
 import CategoryViewer from "./components/category-viewer";
+import { 
+  FileText, 
+  Activity, 
+  AlertTriangle, 
+  CheckCircle, 
+  Loader2,
+  ChevronDown,
+  ChevronRight
+} from "lucide-react";
 
 export default function DocumentUpload() {
   const [file, setFile] = useState(null);
@@ -22,6 +31,10 @@ export default function DocumentUpload() {
   const [uploadedPdfPath, setUploadedPdfPath] = useState("");
   const [predictedClauses, setPredictedClauses] = useState(null);
   const [searchKeyword, setSearchKeyword] = useState("");
+  
+  // Summarization State
+  const [summaryJobId, setSummaryJobId] = useState(null);
+  const [expandedSummaryRows, setExpandedSummaryRows] = useState({});
 
   const clauses = [
     "Document Name",
@@ -80,6 +93,10 @@ export default function DocumentUpload() {
         setDocumentName(selectedFile.name.replace(/\.[^/.]+$/, "")); // Remove file extension
         setUploadComplete(false);
         setProgress(0);
+        setPredictedClauses(null);
+        setSummaryResult(null);
+        setSummaryJobId(null);
+        setExpandedSummaryRows({});
       } else {
         alert("File size must be less than 10MB");
       }
@@ -161,13 +178,13 @@ export default function DocumentUpload() {
   };
 
   const handleAnalyze = async () => {
-    if (!file) {
-      alert("Please select a file first");
+    if (!uploadedPdfPath && !file) {
+      alert("Please upload the file first.");
       return;
     }
 
-    // Use server-returned path if available, otherwise fall back to a reasonable default
-    const pdfPath = uploadedPdfPath || `../client/uploads/${documentName}.pdf`;
+    // Fallback if upload hasn't finished but file is selected
+    const pdfPath = uploadedPdfPath || `../client/uploads/${file.name}`;
 
     setIsAnalyzing(true);
     setError(null);
@@ -199,6 +216,158 @@ export default function DocumentUpload() {
     }
   };
 
+  // --- SUMMARIZATION LOGIC ---
+  const handleSummarize = async () => {
+    if (!uploadedPdfPath) {
+      alert("Please upload the file first.");
+      return;
+    }
+
+    setIsSummarizing(true);
+    setSummaryResult(null);
+    setError(null);
+
+    try {
+      // 1. Start Job
+      const response = await fetch("http://localhost:8000/summaries/start", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ pdf_path: uploadedPdfPath }),
+      });
+
+      if (!response.ok) throw new Error("Failed to start summarization");
+      
+      const data = await response.json();
+      setSummaryJobId(data.job_id);
+      
+      // 2. Poll Status
+      pollSummarizationStatus(data.job_id);
+
+    } catch (err) {
+      setError(`Summarization start failed: ${err.message}`);
+      setIsSummarizing(false);
+    }
+  };
+
+  const pollSummarizationStatus = async (jobId) => {
+    const intervalId = setInterval(async () => {
+      try {
+        const res = await fetch(`http://localhost:8000/summaries/${jobId}`);
+        if (!res.ok) throw new Error("Polling failed");
+        
+        const data = await res.json();
+
+        if (data.status === "COMPLETED" || data.status === "PARTIAL_FAILURE") {
+          setSummaryResult(data);
+          setIsSummarizing(false);
+          clearInterval(intervalId);
+        } else if (data.status === "FAILED") {
+          setError(`Summarization failed: ${data.error || "Unknown error"}`);
+          setIsSummarizing(false);
+          clearInterval(intervalId);
+        }
+        // If PENDING/PROCESSING, continue polling...
+      } catch (err) {
+        console.error("Polling error", err);
+        setIsSummarizing(false);
+        clearInterval(intervalId);
+      }
+    }, 2000); // Poll every 2 seconds
+  };
+
+  const toggleSummaryRow = (index) => {
+    setExpandedSummaryRows(prev => ({
+      ...prev,
+      [index]: !prev[index]
+    }));
+  };
+
+  const renderSummarizationSection = () => {
+    if (!summaryResult) return null;
+
+    const { document_summary, clause_summaries, model_version } = summaryResult;
+
+    return (
+      <div className="mt-8 space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+        <div className="flex items-center justify-between">
+          <h4 className="text-xl font-bold text-neutral-800 flex items-center gap-2">
+            <FileText className="w-5 h-5 text-blue-600" /> 
+            AI Summary Report
+          </h4>
+          <span className="text-xs text-neutral-400 font-mono">Model: {model_version}</span>
+        </div>
+
+        {/* Executive Summary Card */}
+        <div className="bg-gradient-to-br from-blue-50 to-white rounded-xl border border-blue-100 p-6 shadow-sm">
+          <h5 className="text-sm font-bold text-blue-800 uppercase tracking-wider mb-3">Executive Summary</h5>
+          <div className="prose prose-sm max-w-none text-neutral-700 leading-relaxed whitespace-pre-wrap">
+            {document_summary || "Document summary unavailable."}
+          </div>
+        </div>
+
+        {/* Clause Summaries Table */}
+        <div className="bg-white rounded-xl border border-neutral-200 shadow-sm overflow-hidden">
+          <div className="px-6 py-4 border-b border-neutral-100 bg-neutral-50 flex justify-between items-center">
+            <h5 className="font-semibold text-neutral-700">Clause Breakdown</h5>
+            <span className="text-xs text-neutral-500">{clause_summaries?.length} clauses processed</span>
+          </div>
+          
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-white text-neutral-500 border-b border-neutral-100">
+                <tr>
+                  <th className="px-6 py-3 text-left w-16">#</th>
+                  <th className="px-6 py-3 text-left w-1/4">Category</th>
+                  <th className="px-6 py-3 text-left">Summary</th>
+                  <th className="px-6 py-3 text-right">Status</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-neutral-100">
+                {clause_summaries?.map((item, idx) => (
+                  <tr key={idx} className="hover:bg-neutral-50 transition-colors group">
+                    <td className="px-6 py-4 font-mono text-neutral-400">{item.clause_no}</td>
+                    <td className="px-6 py-4">
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-neutral-100 text-neutral-800">
+                        {item.category}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="space-y-2">
+                        <p className="text-neutral-800 font-medium leading-relaxed">
+                          {item.summary_text}
+                        </p>
+                        {/* Expandable Original Text */}
+                        <button 
+                          onClick={() => toggleSummaryRow(idx)}
+                          className="text-xs text-blue-600 hover:text-blue-800 flex items-center gap-1 font-medium"
+                        >
+                          {expandedSummaryRows[idx] ? <ChevronDown size={14}/> : <ChevronRight size={14}/>}
+                          {expandedSummaryRows[idx] ? "Hide Original Text" : "Show Original Text"}
+                        </button>
+                        {expandedSummaryRows[idx] && (
+                          <div className="mt-2 p-3 bg-neutral-50 rounded-lg border border-neutral-200 text-xs text-neutral-600 italic">
+                            "{item.original_text}"
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      {item.is_failed ? (
+                         <span className="text-red-500 flex items-center justify-end gap-1 text-xs"><AlertTriangle size={14}/> Failed</span>
+                      ) : (
+                        <span className="text-emerald-500 flex items-center justify-end gap-1 text-xs"><CheckCircle size={14}/> Ready</span>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const renderAnalysisTable = () => {
     if (!predictedClauses && !analysisResult) return null;
 
@@ -215,260 +384,146 @@ export default function DocumentUpload() {
 
     return (
       <div className="mt-8 bg-white rounded-xl border border-neutral-200 shadow-sm p-6">
-        <div className="flex items-center justify-between mb-4">
-          <h4 className="text-lg font-semibold">Analysis Results</h4>
+        <div className="flex items-center justify-between mb-6">
+          <h4 className="text-lg font-semibold flex items-center gap-2">
+            <Activity className="w-5 h-5 text-emerald-600"/>
+            Clause Extraction Results
+          </h4>
         </div>
 
-        {predictedClauses && (
-          <div className="mb-4">
-            <input
-              type="text"
-              placeholder="Search clauses by keyword..."
-              value={searchKeyword}
-              onChange={(e) => setSearchKeyword(e.target.value)}
-              className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 shadow-xs outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
-            />
-            <p className="text-sm text-neutral-600 mt-2">
-              Showing {filteredClauses.length} of {predictedClauses.length}{" "}
-              results
-            </p>
-          </div>
-        )}
+        <div className="mb-4">
+          <input
+            type="text"
+            placeholder="Search clauses..."
+            value={searchKeyword}
+            onChange={(e) => setSearchKeyword(e.target.value)}
+            className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 outline-none focus:ring-2 focus:ring-blue-500 transition text-sm"
+          />
+        </div>
 
-        <div className="overflow-hidden rounded-lg border border-neutral-200">
-          <div className="overflow-x-auto">
+        <div className="overflow-hidden rounded-lg border border-neutral-200 mb-6">
+          <div className="overflow-x-auto max-h-[400px]">
             <table className="min-w-full text-sm">
               <thead className="bg-neutral-50 text-neutral-700 sticky top-0 z-10">
                 <tr>
-                  {predictedClauses ? (
-                    <>
-                      <th className="px-4 py-3 text-left font-medium border-b border-neutral-200">
-                        Clause
-                      </th>
-                      <th className="px-4 py-3 text-left font-medium border-b border-neutral-200">
-                        Category
-                      </th>
-                    </>
-                  ) : (
-                    <>
-                      <th className="px-4 py-3 text-left font-medium border-b border-neutral-200">
-                        Label
-                      </th>
-                      <th className="px-4 py-3 text-left font-medium border-b border-neutral-200">
-                        Text
-                      </th>
-                      <th className="px-4 py-3 text-left font-medium border-b border-neutral-200">
-                        Confidence
-                      </th>
-                    </>
-                  )}
+                  <th className="px-4 py-3 text-left font-medium border-b">Text Snippet</th>
+                  <th className="px-4 py-3 text-left font-medium border-b">Category</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-neutral-200">
-                {predictedClauses ? (
-                  filteredClauses.length > 0 ? (
-                    filteredClauses.map((item, index) => (
-                      <tr
-                        key={`pred-${index}`}
-                        className="odd:bg-neutral-50/60 hover:bg-neutral-100/60 transition"
-                      >
-                        <td className="px-4 py-3 text-neutral-800 align-top">
-                          <div className="max-w-3xl leading-relaxed">
-                            {item?.clause?.length > 500
-                              ? `${item.clause.substring(0, 500)}...`
-                              : item?.clause || ""}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3 font-medium align-top">
-                          <CategoryViewer
-                            clause_no={item?.clause_no}
-                            category={item?.category}
-                          />
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td
-                        colSpan="2"
-                        className="px-4 py-8 text-center text-neutral-500"
-                      >
-                        No clauses match your search
-                      </td>
-                    </tr>
-                  )
-                ) : (
-                  Object.entries(analysisResult).map(([label, items]) =>
-                    items.map((item, index) => (
-                      <tr
-                        key={`${label}-${index}`}
-                        className="odd:bg-neutral-50/60 hover:bg-neutral-100/60 transition"
-                      >
-                        <td className="px-4 py-3 font-medium text-blue-700 align-top">
-                          {Number.parseInt(label.match(/\d+$/)[0], 10) >= 41
-                            ? "O-label"
-                            : clauses[
-                                Number.parseInt(label.match(/\d+$/)[0], 10)
-                              ]}
-                        </td>
-                        <td className="px-4 py-3 text-neutral-800 align-top">
-                          <div className="max-w-2xl leading-relaxed">
-                            {item.text.length > 200
-                              ? `${item.text.substring(0, 200)}...`
-                              : item.text}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3">
-                          <span
-                            className={`inline-block px-2.5 py-1 rounded-md text-xs font-semibold
-                              ${
-                                item.confidence > 0.7
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : item.confidence > 0.5
-                                  ? "bg-amber-100 text-amber-800"
-                                  : "bg-rose-100 text-rose-800"
-                              }`}
-                          >
-                            {(item.confidence * 100).toFixed(1)}%
-                          </span>
-                        </td>
-                      </tr>
-                    ))
-                  )
-                )}
+                {filteredClauses.map((item, index) => (
+                  <tr key={`pred-${index}`} className="hover:bg-neutral-50">
+                    <td className="px-4 py-3 text-neutral-600 w-2/3">
+                      {item.clause.length > 150 ? `${item.clause.substring(0, 150)}...` : item.clause}
+                    </td>
+                    <td className="px-4 py-3 w-1/3">
+                      <CategoryViewer clause_no={item.clause_no} category={item.category} />
+                    </td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
         </div>
 
-        {isPDF &&
-          Array.isArray(predictedClauses) &&
-          predictedClauses.length > 0 && (
-            <div className="mt-6 space-y-4">
-              <PDFViewerWithHighlights
-                file={file}
-                predictedClauses={predictedClauses}
-              />
-              <ClauseLegend predictedClauses={predictedClauses} />
+        {isPDF && predictedClauses.length > 0 && (
+          <div className="mt-6 space-y-4">
+            <div className="border-t border-neutral-100 pt-6">
+              <h5 className="font-medium text-neutral-900 mb-4">PDF Visualization</h5>
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                 <div className="lg:col-span-3 border border-neutral-200 rounded-lg overflow-hidden h-[600px]">
+                    <PDFViewerWithHighlights file={file} predictedClauses={predictedClauses} />
+                 </div>
+                 <div className="lg:col-span-1">
+                    <ClauseLegend predictedClauses={predictedClauses} />
+                 </div>
+              </div>
             </div>
-          )}
+          </div>
+        )}
       </div>
     );
   };
 
   return (
-    <div className="min-h-screen bg-neutral-50 text-neutral-900">
-      <div className="container mx-auto px-4 pt-16 pb-12">
-        <div className="max-w-3xl mx-auto p-8 bg-white rounded-xl border border-neutral-200 shadow-sm">
-          <div className="mb-6">
-            <h3 className="text-2xl font-semibold tracking-tight">
-              Upload Legal Document
-            </h3>
-            <p className="text-sm text-neutral-600 mt-1">
-              Upload a PDF or DOCX, then analyze clauses and view highlights in
-              the PDF.
-            </p>
+    <div className="min-h-screen bg-neutral-50 text-neutral-900 font-sans">
+      <div className="container mx-auto px-4 pt-10 pb-20">
+        
+        {/* HEADER & UPLOAD SECTION */}
+        <div className="max-w-4xl mx-auto p-8 bg-white rounded-2xl border border-neutral-200 shadow-sm mb-8">
+          <div className="mb-8 text-center">
+            <h3 className="text-3xl font-bold tracking-tight text-neutral-900">Tahqiiq Legal Analyzer</h3>
+            <p className="text-neutral-500 mt-2">Upload a contract to identify clauses, analyze risks, and generate AI summaries.</p>
           </div>
 
           <div
-            className={`relative border-2 border-dashed rounded-xl p-8 text-center mb-5 cursor-pointer transition-all
-              ${
-                isDragOver
-                  ? "border-blue-500 bg-blue-50/60"
-                  : "border-neutral-300 hover:border-neutral-400 bg-neutral-50/40"
-              }`}
+            className={`relative border-2 border-dashed rounded-xl p-10 text-center mb-6 cursor-pointer transition-all duration-200 group
+              ${isDragOver ? "border-blue-500 bg-blue-50" : "border-neutral-300 hover:border-blue-400 hover:bg-neutral-50"}`}
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
             onClick={handleBrowseClick}
-            role="button"
-            aria-label="Upload area. Click to browse files or drag and drop a document."
-            tabIndex={0}
           >
-            {/* decorative icon */}
-            <div className="mx-auto mb-3 inline-flex h-10 w-10 items-center justify-center rounded-full bg-white shadow-sm ring-1 ring-neutral-200">
-              <svg
-                width="20"
-                height="20"
-                viewBox="0 0 24 24"
-                className="text-neutral-700"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-              >
-                <path d="M12 16V4" />
-                <path d="m6 10 6-6 6 6" />
-                <rect x="4" y="16" width="16" height="4" rx="1" />
-              </svg>
+            <div className="w-16 h-16 bg-neutral-100 text-neutral-400 rounded-full flex items-center justify-center mx-auto mb-4 group-hover:bg-blue-100 group-hover:text-blue-600 transition-colors">
+              <FileText size={32} />
             </div>
-            <p className="mb-1 text-neutral-700">
-              {"Drag & Drop or "}
-              <span className="text-blue-600 underline decoration-2 underline-offset-4 hover:text-blue-700">
-                Browse Files
-              </span>
+            <p className="text-lg font-medium text-neutral-700 mb-1">
+              Drag & Drop or <span className="text-blue-600 underline decoration-2 underline-offset-4">Browse</span>
             </p>
-            <small className="block text-neutral-500">
-              Accepts PDF/DOCX, max 10MB
-            </small>
-            <input
-              ref={fileInputRef}
-              type="file"
-              className="hidden"
-              accept=".pdf,.docx"
-              onChange={handleFileInputChange}
-            />
-            {file && (
-              <div className="mt-3">
-                <small className="text-green-700 font-medium">
-                  Selected: {file.name}
-                </small>
-              </div>
-            )}
+            <p className="text-sm text-neutral-400">PDF or DOCX, max 10MB</p>
+            <input ref={fileInputRef} type="file" className="hidden" accept=".pdf,.docx" onChange={handleFileInputChange} />
           </div>
 
-          <div className="mb-5">
-            <label
-              htmlFor="doc-name"
-              className="block text-sm font-medium text-neutral-800 mb-2"
-            >
-              Document Name
-            </label>
-            <input
-              type="text"
-              className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 shadow-xs outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition"
-              id="doc-name"
-              placeholder="Auto-filled from file"
-              value={documentName}
-              onChange={(e) => setDocumentName(e.target.value)}
-            />
-          </div>
+          {file && (
+             <div className="flex items-center justify-center gap-2 mb-6 text-emerald-600 bg-emerald-50 py-2 rounded-lg border border-emerald-100">
+                <CheckCircle size={16} /> 
+                <span className="font-medium text-sm">{file.name} ready for processing</span>
+             </div>
+          )}
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <button
-              className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-4 py-2.5 text-white font-medium shadow-sm hover:bg-blue-700 disabled:bg-neutral-300 disabled:text-neutral-600 disabled:cursor-not-allowed transition"
+              className="inline-flex items-center justify-center bg-neutral-800 hover:bg-neutral-900 text-white rounded-lg py-3 px-4 font-medium shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all"
               onClick={handleUpload}
-              disabled={isUploading || !file}
+              disabled={isUploading || !file || uploadComplete}
             >
-              {isUploading ? "Uploading..." : "Upload"}
+              {isUploading ? "Uploading..." : uploadComplete ? "Uploaded" : "1. Upload"}
             </button>
 
             <button
-              className="inline-flex items-center justify-center rounded-lg bg-emerald-600 px-4 py-2.5 text-white font-medium shadow-sm hover:bg-emerald-700 disabled:bg-neutral-300 disabled:text-neutral-600 disabled:cursor-not-allowed transition"
+              className="inline-flex items-center justify-center bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg py-3 px-4 font-medium shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all"
               onClick={handleAnalyze}
-              disabled={isAnalyzing || !file}
+              disabled={isAnalyzing || !uploadComplete}
             >
-              {isAnalyzing ? "Analyzing..." : "Analyze"}
+              {isAnalyzing ? (
+                 <span className="flex items-center justify-center gap-2"><Loader2 className="animate-spin" size={18}/> Analyzing...</span>
+              ) : "2. Analyze Clauses"}
+            </button>
+            
+            <button
+              className="inline-flex items-center justify-center bg-blue-600 hover:bg-blue-700 text-white rounded-lg py-3 px-4 font-medium shadow-sm disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+              onClick={handleSummarize}
+              disabled={isSummarizing || !uploadComplete}
+            >
+              {isSummarizing ? (
+                 <span className="flex items-center justify-center gap-2"><Loader2 className="animate-spin" size={18}/> Summarizing...</span>
+              ) : "3. Summarize"}
             </button>
           </div>
 
           {error && (
-            <div className="mt-5 rounded-md border-l-4 border-red-600 bg-red-50 px-4 py-3 text-red-800">
-              {error}
+            <div className="mt-6 p-4 rounded-lg bg-red-50 border border-red-100 text-red-700 flex items-start gap-3">
+              <AlertTriangle className="mt-0.5 shrink-0" size={18}/>
+              <p className="text-sm">{error}</p>
             </div>
           )}
         </div>
 
-        {renderAnalysisTable()}
+        {/* RESULTS AREA */}
+        <div className="max-w-6xl mx-auto">
+           {renderAnalysisTable()}
+           {renderSummarizationSection()}
+        </div>
       </div>
     </div>
   );

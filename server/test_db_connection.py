@@ -1,9 +1,13 @@
 import asyncio
 import motor.motor_asyncio
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv(override=True)  # Override system environment variables
+# Force loading the .env that sits next to this file so we don't accidentally
+# use a different .env or a globally-set environment variable.
+ENV_PATH = Path(__file__).parent / ".env"
+load_dotenv(dotenv_path=ENV_PATH, override=True)
 
 MONGO_URI = os.getenv("MONGO_URI")
 DB_NAME = os.getenv("DB_NAME")

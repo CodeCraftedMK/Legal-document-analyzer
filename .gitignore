@@ -23,4 +23,25 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# Large model files
 *.safetensors
+*.bin
+*.zip
+*.exe
+mistral-7b-legal-lora/
+OllamaSetup.exe
+mistral-7b-legal-lora.zip
