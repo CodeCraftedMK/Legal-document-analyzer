@@ -10,6 +10,15 @@ import asyncio
 from utils import predict_clauses as clause_utils
 from utils import summarizer
 from db import db
+
+# RAG is optional - import only if available
+try:
+    from utils import rag
+    RAG_AVAILABLE = True
+except ImportError as e:
+    print(f"⚠️ RAG not available: {e}. Continuing without RAG support.")
+    RAG_AVAILABLE = False
+    rag = None
 import datetime
 from bson import ObjectId
 
@@ -49,7 +58,8 @@ class PDFRequest(BaseModel):
 async def run_summarization_job(job_id: str, pdf_path: str):
     """
     Asynchronously run clause-level + document-level summarization.
-    Uses sliding window context (previous + next clause).
+    Uses sliding window context (previous + next clause) + RAG for enhanced context.
+    RAG retrieves semantically relevant clauses from across the document.
     """
     job_object_id = ObjectId(job_id)
     start_time = datetime.datetime.utcnow()
@@ -76,6 +86,20 @@ async def run_summarization_job(job_id: str, pdf_path: str):
             )
             return
 
+        # RAG: Index the document for semantic search (optional)
+        retriever = None
+        if RAG_AVAILABLE and rag:
+            print(f"📚 Indexing {len(clauses)} clauses into vector database...")
+            try:
+                await loop.run_in_executor(None, rag.index_document, job_id, clauses)
+                retriever = await loop.run_in_executor(None, rag.get_retriever, job_id)
+                print(f"✅ RAG indexing complete. Retriever ready.")
+            except Exception as rag_error:
+                print(f"⚠️ RAG indexing failed (will continue without RAG): {rag_error}")
+                retriever = None
+        else:
+            print("ℹ️ RAG not available, using sliding window context only.")
+
         clause_summaries = []
         failure_count = 0
 
@@ -85,7 +109,7 @@ async def run_summarization_job(job_id: str, pdf_path: str):
             next_text = clauses[idx + 1]["clause"] if idx < len(clauses) - 1 else ""
 
             summary_text, failed = await summarizer.generate_clause_summary(
-                current_text, prev_text, next_text
+                current_text, prev_text, next_text, retriever
             )
             failure_count += 1 if failed else 0
 
