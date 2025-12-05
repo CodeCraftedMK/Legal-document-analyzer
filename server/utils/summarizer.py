@@ -5,68 +5,82 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from langchain_core.retrievers import BaseRetriever
 from langchain_ollama import ChatOllama
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # -----------------------------------------------------------------------------
-# Configuration (audit-friendly)
+# Configuration
 # -----------------------------------------------------------------------------
 MODEL_VERSION = os.getenv("LLM_MODEL_VERSION", "llama3-legal-v1")
-PROMPT_VERSION = os.getenv("LLM_PROMPT_VERSION", "v3.0-rag-enhanced")
+PROMPT_VERSION = os.getenv("LLM_PROMPT_VERSION", "v3.0-map-reduce")
 
 # -----------------------------------------------------------------------------
-# LLM Client (local Ollama; adjust base_url/model as needed)
+# LLM Client
 # -----------------------------------------------------------------------------
 llm = ChatOllama(
     model=os.getenv("LLM_MODEL_NAME", "llama3"),
-    temperature=float(os.getenv("LLM_TEMPERATURE", "0.1")),
+    temperature=0.1,
     base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
+    num_ctx=8192 # Ensure context window is large enough for chunks
 )
 
 # -----------------------------------------------------------------------------
-# Prompts
+# 1. CLAUSE SUMMARIZATION PROMPTS (Micro-Level)
 # -----------------------------------------------------------------------------
 clause_template = """
 You are an expert legal analyst. Summarize the TARGET CLAUSE below.
 
-CONTEXT INFORMATION:
-The surrounding clauses and retrieved relevant clauses are provided for disambiguation; do NOT summarize them.
-
---- BEGIN CONTEXT ---
-PREVIOUS CLAUSE: {prev_text}
-NEXT CLAUSE: {next_text}
+CONTEXT:
 {rag_context}
---- END CONTEXT ---
 
 TARGET CLAUSE:
 "{target_text}"
 
 INSTRUCTIONS:
-1. One concise sentence capturing the obligation/right/definition.
-2. If boilerplate, state that briefly.
-3. Avoid lead-ins like "The clause states that...".
-4. Use the retrieved context to understand references (e.g., "as defined in Section X").
+1. One concise sentence capturing the obligation/right.
+2. Use the context to clarify defined terms.
 
 Summary:
 """
 clause_prompt = PromptTemplate.from_template(clause_template)
 clause_chain = clause_prompt | llm | StrOutputParser()
 
-doc_template = """
-You are a Senior Legal Partner. Based on the clause summaries below, write an Executive Summary.
+# -----------------------------------------------------------------------------
+# 2. GENERAL SUMMARIZATION PROMPTS (Macro-Level / Map-Reduce)
+# -----------------------------------------------------------------------------
+# MAP STEP: Summarize a chunk of the raw document
+map_template = """
+Summarize the following section of a legal document. Capture key terms, dates, financial figures, and obligations.
 
-LIST OF CLAUSE SUMMARIES:
-{clause_summaries_text}
+DOCUMENT SECTION:
+"{text}"
+
+CONCISE SUMMARY:
+"""
+map_prompt = PromptTemplate.from_template(map_template)
+map_chain = map_prompt | llm | StrOutputParser()
+
+# REDUCE STEP: Combine chunk summaries into final executive summary
+reduce_template = """
+You are a Senior Legal Partner. Below are summaries of different sections of a contract.
+
+Merge them into a cohesive, professional Executive Summary.
+
+SECTION SUMMARIES:
+{text}
 
 FORMAT:
-- **Core Purpose**: what the agreement covers
-- **Key Obligations**: what parties must do
-- **Risks & Termination**: how disputes/termination are handled
+- **Core Purpose**: The main goal of the agreement.
+- **Key Terms**: Financials, dates, and major deliverables.
+- **Critical Risks**: Liabilities, indemnities, and termination rights.
 
 Executive Summary:
 """
-doc_prompt = PromptTemplate.from_template(doc_template)
-doc_chain = doc_prompt | llm | StrOutputParser()
+reduce_prompt = PromptTemplate.from_template(reduce_template)
+reduce_chain = reduce_prompt | llm | StrOutputParser()
 
-
+# -----------------------------------------------------------------------------
+# FUNCTIONS
+# -----------------------------------------------------------------------------
 async def generate_clause_summary(
     target_text: str, 
     prev_text: str = "", 
@@ -74,66 +88,92 @@ async def generate_clause_summary(
     retriever: Optional[BaseRetriever] = None
 ) -> Tuple[str, bool]:
     """
-    Asynchronously summarize a single clause using sliding-window context + RAG.
-    Returns (summary_text, is_failed).
-    
-    If retriever is provided, it will search for relevant clauses across the document
-    to provide better context (e.g., definitions referenced in the target clause).
+    Summarize specific extracted clauses (High precision).
     """
     try:
-        # RAG: Retrieve relevant clauses if retriever is available
-        rag_context = ""
-        if retriever and target_text:
-            try:
-                # Search for relevant clauses using the target clause text
-                # Handle both langchain-core 0.3.x and 1.x API
-                if hasattr(retriever, 'ainvoke'):
-                    retrieved_docs = await retriever.ainvoke(target_text)
-                elif hasattr(retriever, 'aget_relevant_documents'):
-                    retrieved_docs = await retriever.aget_relevant_documents(target_text)
-                else:
-                    # Fallback to sync if async not available
-                    retrieved_docs = retriever.get_relevant_documents(target_text)
-                
-                if retrieved_docs:
-                    rag_parts = []
-                    for doc in retrieved_docs:
-                        # Skip if it's the same as prev/next to avoid duplication
-                        doc_text = doc.page_content
-                        if doc_text != prev_text and doc_text != next_text and doc_text != target_text:
-                            clause_no = doc.metadata.get("clause_no", "?")
-                            category = doc.metadata.get("category", "Unknown")
-                            rag_parts.append(f"RELEVANT CLAUSE #{clause_no} ({category}): {doc_text[:200]}...")
-                    
-                    if rag_parts:
-                        rag_context = "RETRIEVED RELEVANT CLAUSES:\n" + "\n".join(rag_parts) + "\n"
-            except Exception as rag_error:
-                print(f"RAG retrieval error (non-fatal): {rag_error}")
-                # Continue without RAG context if retrieval fails
+        rag_context = f"PREV: {prev_text}\nNEXT: {next_text}"
         
+        if retriever:
+            try:
+                # Use sync invoke if async not supported by specific retriever version
+                docs = await retriever.ainvoke(target_text)
+                if docs:
+                    rag_context += "\nRELATED:\n" + "\n".join([d.page_content[:200] for d in docs])
+            except:
+                pass
         inputs = {
             "target_text": target_text,
-            "prev_text": prev_text if prev_text else "None",
-            "next_text": next_text if next_text else "None",
-            "rag_context": rag_context if rag_context else "",
+            "rag_context": rag_context,
         }
         summary = await clause_chain.ainvoke(inputs)
         return summary.strip(), False
     except Exception as exc:
-        print(f"Summarization error (clause): {exc}")
-        return "Summary unavailable due to processing error.", True
+        print(f"Clause Error: {exc}")
+        return "Summary unavailable.", True
 
-
-async def generate_document_summary(clause_summaries: List[str]) -> str:
+async def generate_general_summary_map_reduce(full_doc_text: str) -> str:
     """
-    Aggregate clause-level summaries into a document-level executive summary.
+    Splits the FULL document text into chunks, summarizes each, 
+    and then aggregates them into an Executive Summary.
     """
-    if not clause_summaries:
-        return "No clause summaries available to generate document overview."
+    if not full_doc_text:
+        print("⚠️ No text available for general summarization")
+        return "No text available to summarize."
+    
+    if len(full_doc_text.strip()) < 50:
+        print(f"⚠️ Text too short for summarization: {len(full_doc_text)} chars")
+        return "Document text is too short to generate a meaningful summary."
+    
     try:
-        joined = "\n- ".join(clause_summaries)
-        summary = await doc_chain.ainvoke({"clause_summaries_text": joined})
-        return summary.strip()
+        # 1. Split text into chunks (Llama 3 has 8k context, so 4k chunks are safe)
+        print(f"📄 Starting Map-Reduce summarization. Document length: {len(full_doc_text)} characters")
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=4000,
+            chunk_overlap=200,
+            separators=["\n\n", "\n", ". ", " ", ""]
+        )
+        docs = text_splitter.create_documents([full_doc_text])
+        print(f"📄 Split document into {len(docs)} chunks for general summarization.")
+
+        if not docs or len(docs) == 0:
+            print("⚠️ No chunks created from document")
+            return "Unable to split document into processable chunks."
+
+        # 2. MAP: Summarize each chunk
+        chunk_summaries = []
+        for idx, doc in enumerate(docs):
+            try:
+                print(f"  📝 Summarizing chunk {idx + 1}/{len(docs)}...")
+                summary = await map_chain.ainvoke({"text": doc.page_content})
+                if summary and summary.strip():
+                    chunk_summaries.append(summary.strip())
+                else:
+                    print(f"  ⚠️ Chunk {idx + 1} returned empty summary")
+            except Exception as chunk_error:
+                print(f"  ❌ Error summarizing chunk {idx + 1}: {chunk_error}")
+                import traceback
+                traceback.print_exc()
+                # Continue with other chunks even if one fails
+
+        if not chunk_summaries:
+            print("❌ No chunk summaries generated")
+            return "Failed to generate summaries for document chunks."
+
+        print(f"✅ Generated {len(chunk_summaries)} chunk summaries")
+
+        # 3. REDUCE: Combine summaries
+        combined_text = "\n\n".join(chunk_summaries)
+        print(f"🔄 Combining {len(chunk_summaries)} summaries into executive summary...")
+        final_summary = await reduce_chain.ainvoke({"text": combined_text})
+        
+        if not final_summary or not final_summary.strip():
+            print("⚠️ Reduce step returned empty summary")
+            return "Failed to generate final executive summary."
+        
+        print("✅ Executive summary generated successfully")
+        return final_summary.strip()
     except Exception as exc:
-        print(f"Summarization error (document): {exc}")
-        return "Document summary unavailable due to processing error."
+        print(f"❌ General Summary Error: {exc}")
+        import traceback
+        traceback.print_exc()
+        return f"Executive summary unavailable due to processing error: {str(exc)}"

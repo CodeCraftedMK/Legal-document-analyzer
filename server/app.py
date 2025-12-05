@@ -7,6 +7,8 @@ from pydantic import BaseModel
 import os
 import shutil
 import asyncio
+import hashlib
+import pdfplumber
 from utils import predict_clauses as clause_utils
 from utils import summarizer
 from db import db
@@ -55,6 +57,69 @@ class PDFRequest(BaseModel):
     pdf_path: str
 
 
+def compute_file_hash(path: str) -> str:
+    """Return a stable SHA256 hash of the file contents."""
+    sha = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            sha.update(chunk)
+    return sha.hexdigest()
+
+
+async def get_cached_clauses(pdf_path: str):
+    file_hash = compute_file_hash(pdf_path)
+    cached = await db["clause_cache"].find_one({"file_hash": file_hash})
+    return cached["predicted_clauses"] if cached else None, file_hash
+
+
+async def cache_clauses(file_hash: str, clauses: list, pdf_path: str):
+    await db["clause_cache"].update_one(
+        {"file_hash": file_hash},
+        {
+            "$set": {
+                "predicted_clauses": clauses,
+                "pdf_path": pdf_path,
+                "updated_at": datetime.datetime.utcnow(),
+            }
+        },
+        upsert=True,
+    )
+
+
+def extract_full_text(pdf_path: str) -> str:
+    """Extract all text from PDF for Map-Reduce summarization."""
+    text = ""
+    try:
+        if not os.path.exists(pdf_path):
+            print(f"❌ PDF file not found: {pdf_path}")
+            return ""
+        
+        print(f"📖 Opening PDF: {pdf_path}")
+        with pdfplumber.open(pdf_path) as pdf:
+            total_pages = len(pdf.pages)
+            print(f"📄 PDF has {total_pages} pages")
+            
+            for idx, page in enumerate(pdf.pages):
+                try:
+                    page_text = page.extract_text()
+                    if page_text:
+                        text += page_text + "\n"
+                    else:
+                        print(f"  ⚠️ Page {idx + 1} returned no text")
+                except Exception as page_error:
+                    print(f"  ❌ Error extracting text from page {idx + 1}: {page_error}")
+                    continue
+        
+        extracted_length = len(text.strip())
+        print(f"✅ Extracted {extracted_length} characters from PDF")
+        return text.strip()
+    except Exception as exc:
+        print(f"❌ Error extracting full text from {pdf_path}: {exc}")
+        import traceback
+        traceback.print_exc()
+        return ""
+
+
 async def run_summarization_job(job_id: str, pdf_path: str):
     """
     Asynchronously run clause-level + document-level summarization.
@@ -71,7 +136,13 @@ async def run_summarization_job(job_id: str, pdf_path: str):
         )
 
         loop = asyncio.get_running_loop()
-        clauses = await loop.run_in_executor(None, clause_utils.predict_clauses, pdf_path)
+        cached_clauses, file_hash = await get_cached_clauses(pdf_path)
+        if cached_clauses:
+            print("✅ Using cached clause predictions")
+            clauses = cached_clauses
+        else:
+            clauses = await loop.run_in_executor(None, clause_utils.predict_clauses, pdf_path)
+            await cache_clauses(file_hash, clauses, pdf_path)
 
         if not clauses:
             await db["summaries"].update_one(
@@ -100,24 +171,51 @@ async def run_summarization_job(job_id: str, pdf_path: str):
         else:
             print("ℹ️ RAG not available, using sliding window context only.")
 
+        # Extract full document text early and start Map-Reduce summarization in parallel
+        print("📄 Extracting full document text for general summarization...")
+        full_doc_text = await loop.run_in_executor(None, extract_full_text, pdf_path)
+        
+        if not full_doc_text or len(full_doc_text.strip()) < 50:
+            print(f"⚠️ Warning: Extracted text is empty or too short ({len(full_doc_text) if full_doc_text else 0} chars)")
+            # Still try to generate summary, but log the issue
+        else:
+            print(f"✅ Extracted {len(full_doc_text)} characters from PDF")
+        
+        doc_summary_task = asyncio.create_task(
+            summarizer.generate_general_summary_map_reduce(full_doc_text)
+        )
+
         clause_summaries = []
         failure_count = 0
+        batch_size = int(os.getenv("CLAUSE_BATCH_SIZE", "5"))
 
-        for idx, clause in enumerate(clauses):
-            current_text = clause.get("clause", "")
-            prev_text = clauses[idx - 1]["clause"] if idx > 0 else ""
-            next_text = clauses[idx + 1]["clause"] if idx < len(clauses) - 1 else ""
+        async def summarize_batch(batch_start: int, batch: list):
+            results = []
+            for local_idx, clause in enumerate(batch):
+                idx = batch_start + local_idx
+                current_text = clause.get("clause", "")
+                prev_text = clauses[idx - 1]["clause"] if idx > 0 else ""
+                next_text = clauses[idx + 1]["clause"] if idx < len(clauses) - 1 else ""
+                results.append(
+                    summarizer.generate_clause_summary(
+                        current_text, prev_text, next_text, retriever
+                    )
+                )
+            return await asyncio.gather(*results)
 
-            summary_text, failed = await summarizer.generate_clause_summary(
-                current_text, prev_text, next_text, retriever
-            )
+        summaries_results = []
+        for start in range(0, len(clauses), batch_size):
+            batch = clauses[start : start + batch_size]
+            summaries_results.extend(await summarize_batch(start, batch))
+
+        for idx, (summary_text, failed) in enumerate(summaries_results):
             failure_count += 1 if failed else 0
-
+            clause = clauses[idx]
             clause_summaries.append(
                 {
                     "clause_no": clause.get("clause_no", idx + 1),
                     "category": clause.get("category", "Unknown"),
-                    "original_text": current_text,
+                    "original_text": clause.get("clause", ""),
                     "summary_text": summary_text,
                     "is_failed": bool(failed),
                     "model_version": summarizer.MODEL_VERSION,
@@ -125,12 +223,14 @@ async def run_summarization_job(job_id: str, pdf_path: str):
                 }
             )
 
-        valid_clause_summaries = [
-            c["summary_text"] for c in clause_summaries if not c["is_failed"]
-        ]
-        document_summary = await summarizer.generate_document_summary(
-            valid_clause_summaries
-        )
+        # Wait for Map-Reduce document summary (running in parallel with clause summarization)
+        try:
+            document_summary = await doc_summary_task
+        except Exception as doc_summary_error:
+            print(f"❌ Error waiting for document summary task: {doc_summary_error}")
+            import traceback
+            traceback.print_exc()
+            document_summary = f"Executive summary unavailable: {str(doc_summary_error)}"
 
         if failure_count == 0:
             status = "COMPLETED"
@@ -257,6 +357,9 @@ async def predict_clauses(request: PDFRequest):
     print(f"Analyzing: {pdf_path}")
     results = clause_utils.predict_clauses(pdf_path)
 
+    file_hash = compute_file_hash(pdf_path)
+    await cache_clauses(file_hash, results, pdf_path)
+
     # Save to MongoDB
     doc = {
         "pdf_path": pdf_path,
@@ -266,6 +369,23 @@ async def predict_clauses(request: PDFRequest):
     await db["clauses"].insert_one(doc)
 
     return {"predicted_clauses": results, "saved_to_db": True}
+
+
+@app.get("/warmup")
+async def warmup():
+    """
+    Warmup endpoint to cache/load models and ensure LLM is responsive.
+    """
+    load_model_once()
+    try:
+        # lightweight ping to LLM
+        summary_text, failed = await summarizer.generate_clause_summary(
+            "This is a warmup clause.", "", "", None
+        )
+        status = "ok" if not failed else "llm_error"
+    except Exception as exc:
+        status = f"error: {exc}"
+    return {"status": status}
 
 if __name__ == "__main__":
     import uvicorn
