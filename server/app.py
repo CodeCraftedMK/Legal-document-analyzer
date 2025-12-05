@@ -56,6 +56,13 @@ def load_model_once():
 class PDFRequest(BaseModel):
     pdf_path: str
 
+class ClauseSummaryRequest(BaseModel):
+    text: str
+    job_id: str  # To lookup RAG context
+    prev_text: str = ""
+    next_text: str = ""
+    clause_no: int = 0
+
 
 def compute_file_hash(path: str) -> str:
     """Return a stable SHA256 hash of the file contents."""
@@ -122,9 +129,8 @@ def extract_full_text(pdf_path: str) -> str:
 
 async def run_summarization_job(job_id: str, pdf_path: str):
     """
-    Asynchronously run clause-level + document-level summarization.
-    Uses sliding window context (previous + next clause) + RAG for enhanced context.
-    RAG retrieves semantically relevant clauses from across the document.
+    Fast summarization: Only generates general Map-Reduce summary.
+    Clause summaries are generated on-demand via /summaries/clause endpoint.
     """
     job_object_id = ObjectId(job_id)
     start_time = datetime.datetime.utcnow()
@@ -136,6 +142,8 @@ async def run_summarization_job(job_id: str, pdf_path: str):
         )
 
         loop = asyncio.get_running_loop()
+        
+        # 1. Get clauses (for RAG indexing and frontend dropdown)
         cached_clauses, file_hash = await get_cached_clauses(pdf_path)
         if cached_clauses:
             print("✅ Using cached clause predictions")
@@ -157,103 +165,52 @@ async def run_summarization_job(job_id: str, pdf_path: str):
             )
             return
 
-        # RAG: Index the document for semantic search (optional)
-        retriever = None
+        # 2. RAG: Index the document for semantic search (for on-demand clause summaries)
         if RAG_AVAILABLE and rag:
-            print(f"📚 Indexing {len(clauses)} clauses into vector database...")
+            print(f"📚 Indexing {len(clauses)} clauses into vector database for on-demand summaries...")
             try:
                 await loop.run_in_executor(None, rag.index_document, job_id, clauses)
-                retriever = await loop.run_in_executor(None, rag.get_retriever, job_id)
-                print(f"✅ RAG indexing complete. Retriever ready.")
+                print(f"✅ RAG indexing complete. Ready for on-demand clause summaries.")
             except Exception as rag_error:
                 print(f"⚠️ RAG indexing failed (will continue without RAG): {rag_error}")
-                retriever = None
         else:
-            print("ℹ️ RAG not available, using sliding window context only.")
+            print("ℹ️ RAG not available, on-demand summaries will use sliding window context only.")
 
-        # Extract full document text early and start Map-Reduce summarization in parallel
+        # 3. Extract full document text and generate ONLY general summary (Map-Reduce)
         print("📄 Extracting full document text for general summarization...")
         full_doc_text = await loop.run_in_executor(None, extract_full_text, pdf_path)
         
         if not full_doc_text or len(full_doc_text.strip()) < 50:
             print(f"⚠️ Warning: Extracted text is empty or too short ({len(full_doc_text) if full_doc_text else 0} chars)")
-            # Still try to generate summary, but log the issue
         else:
             print(f"✅ Extracted {len(full_doc_text)} characters from PDF")
         
-        doc_summary_task = asyncio.create_task(
-            summarizer.generate_general_summary_map_reduce(full_doc_text)
-        )
-
-        clause_summaries = []
-        failure_count = 0
-        batch_size = int(os.getenv("CLAUSE_BATCH_SIZE", "5"))
-
-        async def summarize_batch(batch_start: int, batch: list):
-            results = []
-            for local_idx, clause in enumerate(batch):
-                idx = batch_start + local_idx
-                current_text = clause.get("clause", "")
-                prev_text = clauses[idx - 1]["clause"] if idx > 0 else ""
-                next_text = clauses[idx + 1]["clause"] if idx < len(clauses) - 1 else ""
-                results.append(
-                    summarizer.generate_clause_summary(
-                        current_text, prev_text, next_text, retriever
-                    )
-                )
-            return await asyncio.gather(*results)
-
-        summaries_results = []
-        for start in range(0, len(clauses), batch_size):
-            batch = clauses[start : start + batch_size]
-            summaries_results.extend(await summarize_batch(start, batch))
-
-        for idx, (summary_text, failed) in enumerate(summaries_results):
-            failure_count += 1 if failed else 0
-            clause = clauses[idx]
-            clause_summaries.append(
-                {
-                    "clause_no": clause.get("clause_no", idx + 1),
-                    "category": clause.get("category", "Unknown"),
-                    "original_text": clause.get("clause", ""),
-                    "summary_text": summary_text,
-                    "is_failed": bool(failed),
-                    "model_version": summarizer.MODEL_VERSION,
-                    "prompt_version": summarizer.PROMPT_VERSION,
-                }
-            )
-
-        # Wait for Map-Reduce document summary (running in parallel with clause summarization)
+        # Generate general summary only (no clause loop)
         try:
-            document_summary = await doc_summary_task
+            document_summary = await summarizer.generate_general_summary_map_reduce(full_doc_text)
         except Exception as doc_summary_error:
-            print(f"❌ Error waiting for document summary task: {doc_summary_error}")
+            print(f"❌ Error generating document summary: {doc_summary_error}")
             import traceback
             traceback.print_exc()
             document_summary = f"Executive summary unavailable: {str(doc_summary_error)}"
 
-        if failure_count == 0:
-            status = "COMPLETED"
-        elif failure_count == len(clause_summaries):
-            status = "FAILED"
-        else:
-            status = "PARTIAL_FAILURE"
-
+        # 4. Save & Complete (clause_summaries is empty - generated on-demand)
         await db["summaries"].update_one(
             {"_id": job_object_id},
             {
                 "$set": {
-                    "status": status,
-                    "clause_summaries": clause_summaries,
+                    "status": "COMPLETED",
+                    "clause_summaries": [],  # Empty - generated on-demand
                     "document_summary": document_summary,
                     "model_version": summarizer.MODEL_VERSION,
                     "prompt_version": summarizer.PROMPT_VERSION,
-                    "failure_count": failure_count,
-                    "total_clauses": len(clause_summaries),
+                    "failure_count": 0,
+                    "total_clauses": len(clauses),  # Count for frontend dropdown
                     "completed_at": datetime.datetime.utcnow(),
                 }
             },
         )
+        print(f"✅ General summary completed. {len(clauses)} clauses available for on-demand summarization.")
 
     except Exception as exc:
         await db["summaries"].update_one(
@@ -337,6 +294,48 @@ async def get_summarization(job_id: str):
 
     job["id"] = str(job.pop("_id"))
     return jsonable_encoder(job)
+
+
+@app.post("/summaries/clause")
+async def summarize_single_clause(request: ClauseSummaryRequest):
+    """
+    On-demand summarization for a specific clause selected by the user.
+    Uses RAG context if available for better accuracy.
+    """
+    try:
+        # 1. Get Retriever for this document (if RAG is available)
+        retriever = None
+        if RAG_AVAILABLE and rag:
+            try:
+                loop = asyncio.get_running_loop()
+                retriever = await loop.run_in_executor(None, rag.get_retriever, request.job_id)
+                print(f"✅ Using RAG retriever for clause {request.clause_no}")
+            except Exception as rag_error:
+                print(f"⚠️ Could not get RAG retriever (will use sliding window only): {rag_error}")
+                retriever = None
+        else:
+            print("ℹ️ RAG not available, using sliding window context only.")
+
+        # 2. Generate Summary
+        summary, failed = await summarizer.generate_clause_summary(
+            target_text=request.text,
+            prev_text=request.prev_text,
+            next_text=request.next_text,
+            retriever=retriever
+        )
+
+        if failed:
+            raise HTTPException(status_code=500, detail="Summarization failed")
+
+        return {"summary": summary}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        print(f"❌ Error in clause summarization: {exc}")
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Clause summarization error: {str(exc)}")
+
 
 @app.options("/predict-clauses")
 async def predict_clauses_options():
