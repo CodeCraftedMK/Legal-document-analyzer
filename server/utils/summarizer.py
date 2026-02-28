@@ -17,7 +17,7 @@ PROMPT_VERSION = os.getenv("LLM_PROMPT_VERSION", "v3.0-map-reduce")
 # LLM Client
 # -----------------------------------------------------------------------------
 llm = ChatOllama(
-    model=os.getenv("LLM_MODEL_NAME", "llama3"),
+    model=os.getenv("LLM_MODEL_NAME", "tinyllama"),
     temperature=0.1,
     base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
     num_ctx=8192 # Ensure context window is large enough for chunks

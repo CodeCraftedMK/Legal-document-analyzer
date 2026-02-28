@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import ReactMarkdown from "react-markdown";
 import PDFViewerWithHighlights from "./components/pdf-viewer";
 import ClauseLegend from "./components/clause-legend";
@@ -15,12 +15,126 @@ import {
   Settings,
   Shield,
   BarChart3,
-  Brain
+  Brain,
+  LogIn,
+  User,
+  LogOut,
 } from "lucide-react";
+
+const API_BASE_URL = "http://localhost:8000";
 
 export default function Page() {
   const [activeTab, setActiveTab] = useState("home");
   const [_documentCount, setDocumentCount] = useState(0);
+
+  // Authentication state
+  const [token, setToken] = useState(localStorage.getItem("token") || null);
+  const [user, setUser] = useState(null);
+  const [isAuthenticated, setIsAuthenticated] = useState(!!token);
+
+  const handleLogout = () => {
+    setToken(null);
+    setUser(null);
+    setIsAuthenticated(false);
+    localStorage.removeItem("token");
+    setActiveTab("home");
+  };
+
+  const fetchUserInfo = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/me`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (response.ok) {
+        const userData = await response.json();
+        setUser(userData);
+        setIsAuthenticated(true);
+      } else {
+        // Token invalid, clear it
+        handleLogout();
+      }
+    } catch (error) {
+      console.error("Failed to fetch user info:", error);
+      handleLogout();
+    }
+  };
+
+  // Check authentication on mount
+  useEffect(() => {
+    if (token) {
+      fetchUserInfo();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token]);
+
+  const handleLogin = async (username, password) => {
+    try {
+      const formData = new URLSearchParams();
+      formData.append("username", username);
+      formData.append("password", password);
+
+      const response = await fetch(`${API_BASE_URL}/login`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: formData,
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || "Login failed");
+      }
+
+      const data = await response.json();
+      setToken(data.access_token);
+      localStorage.setItem("token", data.access_token);
+      setIsAuthenticated(true);
+      await fetchUserInfo();
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  };
+
+  const handleRegister = async (username, email, password) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/register`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ username, email, password }),
+      });
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.detail || "Registration failed");
+      }
+
+      return { success: true };
+    } catch (error) {
+      return { success: false, error: error.message };
+    }
+  };
+
+  // Helper function to add auth headers to fetch requests
+  const fetchWithAuth = async (url, options = {}) => {
+    const headers = {
+      ...options.headers,
+    };
+
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    return fetch(url, {
+      ...options,
+      headers,
+    });
+  };
 
   return (
     <main className="min-h-screen bg-gradient-to-br from-background via-background to-background">
@@ -38,15 +152,44 @@ export default function Page() {
               <h1 className="text-xl sm:text-2xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
                 Tahqiiq
               </h1>
-              <p className="text-xs sm:text-sm text-muted-foreground">Legal Document Analysis</p>
+              <p className="text-xs sm:text-sm text-muted-foreground">
+                Legal Document Analysis
+              </p>
             </div>
           </div>
-          <button
-            onClick={() => setActiveTab("upload")}
-            className="px-4 py-2 rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors hidden sm:block"
-          >
-            Get Started
-          </button>
+          <div className="flex items-center gap-3">
+            {isAuthenticated ? (
+              <>
+                <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/50">
+                  <User className="w-4 h-4 text-muted-foreground" />
+                  <span className="text-sm font-medium text-foreground hidden sm:inline">
+                    {user?.username || "User"}
+                  </span>
+                </div>
+                <button
+                  onClick={handleLogout}
+                  className="px-4 py-2 rounded-lg border border-border text-foreground font-medium hover:bg-muted transition-colors flex items-center gap-2"
+                >
+                  <LogOut className="w-4 h-4" />
+                  <span className="hidden sm:inline">Logout</span>
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={() => setActiveTab("login")}
+                className="px-4 py-2 rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors flex items-center gap-2"
+              >
+                <LogIn className="w-4 h-4" />
+                <span className="hidden sm:inline">Login</span>
+              </button>
+            )}
+            <button
+              onClick={() => setActiveTab("login")}
+              className="px-4 py-2 rounded-lg bg-primary text-primary-foreground font-medium hover:bg-primary/90 transition-colors hidden sm:block"
+            >
+              Get Started
+            </button>
+          </div>
         </div>
       </header>
 
@@ -63,13 +206,13 @@ export default function Page() {
                       Intelligent Legal Document Analysis
                     </h2>
                     <p className="text-lg sm:text-xl text-muted-foreground text-balance">
-                      Extract, analyze, and manage legal clauses with AI-powered precision. Save hours on contract
-                      review.
+                      Extract, analyze, and manage legal clauses with AI-powered
+                      precision. Save hours on contract review.
                     </p>
                   </div>
                   <div className="flex flex-col sm:flex-row gap-4">
                     <button
-                      onClick={() => setActiveTab("upload")}
+                      onClick={() => setActiveTab("login")}
                       className="px-6 sm:px-8 py-3 sm:py-4 rounded-lg bg-primary text-primary-foreground font-semibold hover:bg-primary/90 transition-all"
                     >
                       Start Analyzing
@@ -86,15 +229,21 @@ export default function Page() {
                   </div>
                   <div className="grid grid-cols-3 gap-4 pt-6 border-t border-border/50">
                     <div>
-                      <div className="text-2xl sm:text-3xl font-bold text-primary">100%</div>
+                      <div className="text-2xl sm:text-3xl font-bold text-primary">
+                        100%
+                      </div>
                       <p className="text-sm text-muted-foreground">Accurate</p>
                     </div>
                     <div>
-                      <div className="text-2xl sm:text-3xl font-bold text-primary">10x</div>
+                      <div className="text-2xl sm:text-3xl font-bold text-primary">
+                        10x
+                      </div>
                       <p className="text-sm text-muted-foreground">Faster</p>
                     </div>
                     <div>
-                      <div className="text-2xl sm:text-3xl font-bold text-primary">24/7</div>
+                      <div className="text-2xl sm:text-3xl font-bold text-primary">
+                        24/7
+                      </div>
                       <p className="text-sm text-muted-foreground">Available</p>
                     </div>
                   </div>
@@ -107,7 +256,9 @@ export default function Page() {
                     <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/20 mx-auto">
                       <Brain className="w-8 h-8 text-primary" />
                     </div>
-                    <p className="text-muted-foreground max-w-xs">AI-Powered Document Intelligence</p>
+                    <p className="text-muted-foreground max-w-xs">
+                      AI-Powered Document Intelligence
+                    </p>
                   </div>
                 </div>
               </div>
@@ -118,7 +269,9 @@ export default function Page() {
           <section className="border-t border-border/40 bg-card/30 py-20 sm:py-24">
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <div className="text-center space-y-4 mb-16 sm:mb-20">
-                <h3 className="text-3xl sm:text-4xl font-bold text-foreground">Powerful Features</h3>
+                <h3 className="text-3xl sm:text-4xl font-bold text-foreground">
+                  Powerful Features
+                </h3>
                 <p className="text-muted-foreground max-w-2xl mx-auto">
                   Everything you need for professional document analysis
                 </p>
@@ -129,12 +282,14 @@ export default function Page() {
                   {
                     icon: FileText,
                     title: "Smart Extraction",
-                    description: "Automatically identify and extract all legal clauses from your documents",
+                    description:
+                      "Automatically identify and extract all legal clauses from your documents",
                   },
                   {
                     icon: Brain,
                     title: "AI Summarization",
-                    description: "Get concise, intelligent summaries of complex legal language",
+                    description:
+                      "Get concise, intelligent summaries of complex legal language",
                   },
                   {
                     icon: Zap,
@@ -144,17 +299,20 @@ export default function Page() {
                   {
                     icon: BarChart3,
                     title: "Comparison Tools",
-                    description: "Compare multiple documents side-by-side effortlessly",
+                    description:
+                      "Compare multiple documents side-by-side effortlessly",
                   },
                   {
                     icon: Shield,
                     title: "Secure & Private",
-                    description: "Enterprise-grade security for sensitive documents",
+                    description:
+                      "Enterprise-grade security for sensitive documents",
                   },
                   {
                     icon: Settings,
                     title: "Full Management",
-                    description: "Tag, organize, and manage all your extracted clauses",
+                    description:
+                      "Tag, organize, and manage all your extracted clauses",
                   },
                 ].map((feature, i) => (
                   <div
@@ -164,8 +322,12 @@ export default function Page() {
                     <div className="inline-flex items-center justify-center w-12 h-12 rounded-lg bg-primary/10 group-hover:bg-primary/20 transition-colors mb-4">
                       <feature.icon className="w-6 h-6 text-primary" />
                     </div>
-                    <h4 className="font-semibold text-foreground mb-2">{feature.title}</h4>
-                    <p className="text-muted-foreground text-sm">{feature.description}</p>
+                    <h4 className="font-semibold text-foreground mb-2">
+                      {feature.title}
+                    </h4>
+                    <p className="text-muted-foreground text-sm">
+                      {feature.description}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -173,11 +335,18 @@ export default function Page() {
           </section>
 
           {/* How to Use Section */}
-          <section id="how-to" className="py-20 sm:py-24 border-t border-border/40">
+          <section
+            id="how-to"
+            className="py-20 sm:py-24 border-t border-border/40"
+          >
             <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
               <div className="text-center space-y-4 mb-16 sm:mb-20">
-                <h3 className="text-3xl sm:text-4xl font-bold text-foreground">How to Use Tahqiiq</h3>
-                <p className="text-muted-foreground max-w-2xl mx-auto">Get started in 4 simple steps</p>
+                <h3 className="text-3xl sm:text-4xl font-bold text-foreground">
+                  How to Use Tahqiiq
+                </h3>
+                <p className="text-muted-foreground max-w-2xl mx-auto">
+                  Get started in 4 simple steps
+                </p>
               </div>
 
               <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-6 lg:gap-8">
@@ -185,22 +354,26 @@ export default function Page() {
                   {
                     step: "1",
                     title: "Upload Document",
-                    description: "Upload your PDF or DOCX file using drag-and-drop or file selection",
+                    description:
+                      "Upload your PDF or DOCX file using drag-and-drop or file selection",
                   },
                   {
                     step: "2",
                     title: "AI Analysis",
-                    description: "Our AI automatically identifies and extracts all legal clauses",
+                    description:
+                      "Our AI automatically identifies and extracts all legal clauses",
                   },
                   {
                     step: "3",
                     title: "Review Results",
-                    description: "Browse extracted clauses with AI-generated summaries",
+                    description:
+                      "Browse extracted clauses with AI-generated summaries",
                   },
                   {
                     step: "4",
                     title: "Export & Share",
-                    description: "Export results as JSON, CSV, or PDF for further use",
+                    description:
+                      "Export results as JSON, CSV, or PDF for further use",
                   },
                 ].map((item, i) => (
                   <div key={i} className="space-y-4">
@@ -208,8 +381,12 @@ export default function Page() {
                       {item.step}
                     </div>
                     <div>
-                      <h4 className="font-semibold text-foreground mb-2">{item.title}</h4>
-                      <p className="text-muted-foreground text-sm">{item.description}</p>
+                      <h4 className="font-semibold text-foreground mb-2">
+                        {item.title}
+                      </h4>
+                      <p className="text-muted-foreground text-sm">
+                        {item.description}
+                      </p>
                     </div>
                   </div>
                 ))}
@@ -221,7 +398,9 @@ export default function Page() {
                   <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-primary/20">
                     <Zap className="w-8 h-8 text-primary" />
                   </div>
-                  <p className="text-muted-foreground">Interactive demo coming soon</p>
+                  <p className="text-muted-foreground">
+                    Interactive demo coming soon
+                  </p>
                 </div>
               </div>
             </div>
@@ -230,10 +409,14 @@ export default function Page() {
           {/* CTA Section */}
           <section className="border-t border-border/40 bg-gradient-to-br from-primary/5 via-transparent to-accent/5 py-16 sm:py-20">
             <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center space-y-6">
-              <h3 className="text-3xl sm:text-4xl font-bold text-foreground">Ready to analyze?</h3>
-              <p className="text-muted-foreground text-lg">Start reviewing your documents with AI intelligence today</p>
+              <h3 className="text-3xl sm:text-4xl font-bold text-foreground">
+                Ready to analyze?
+              </h3>
+              <p className="text-muted-foreground text-lg">
+                Start reviewing your documents with AI intelligence today
+              </p>
               <button
-                onClick={() => setActiveTab("upload")}
+                onClick={() => setActiveTab("login")}
                 className="px-8 py-4 rounded-lg bg-primary text-primary-foreground font-semibold hover:bg-primary/90 transition-all inline-block"
               >
                 Start Free Analysis
@@ -241,6 +424,15 @@ export default function Page() {
             </div>
           </section>
         </>
+      )}
+
+      {/* Login/Register Page */}
+      {activeTab === "login" && (
+        <LoginPage
+          onLogin={handleLogin}
+          onRegister={handleRegister}
+          onSuccess={() => setActiveTab("upload")}
+        />
       )}
 
       {/* Application Pages */}
@@ -262,7 +454,11 @@ export default function Page() {
 
           {/* Application Content */}
           <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
-            <DocumentUpload onDocumentProcessed={() => setDocumentCount((c) => c + 1)} />
+            <DocumentUpload
+              onDocumentProcessed={() => setDocumentCount((c) => c + 1)}
+              fetchWithAuth={fetchWithAuth}
+              API_BASE_URL={API_BASE_URL}
+            />
           </div>
         </>
       )}
@@ -278,7 +474,9 @@ export default function Page() {
                 </div>
                 <span className="font-bold text-foreground">Tahqiiq</span>
               </div>
-              <p className="text-sm text-muted-foreground">Professional legal document analysis powered by AI.</p>
+              <p className="text-sm text-muted-foreground">
+                Professional legal document analysis powered by AI.
+              </p>
             </div>
             <div>
               <h4 className="font-semibold text-foreground mb-4">Product</h4>
@@ -292,12 +490,18 @@ export default function Page() {
                   </button>
                 </li>
                 <li>
-                  <a href="#" className="text-muted-foreground hover:text-foreground transition">
+                  <a
+                    href="#"
+                    className="text-muted-foreground hover:text-foreground transition"
+                  >
                     Pricing
                   </a>
                 </li>
                 <li>
-                  <a href="#" className="text-muted-foreground hover:text-foreground transition">
+                  <a
+                    href="#"
+                    className="text-muted-foreground hover:text-foreground transition"
+                  >
                     Documentation
                   </a>
                 </li>
@@ -307,17 +511,26 @@ export default function Page() {
               <h4 className="font-semibold text-foreground mb-4">Company</h4>
               <ul className="space-y-2 text-sm">
                 <li>
-                  <a href="#" className="text-muted-foreground hover:text-foreground transition">
+                  <a
+                    href="#"
+                    className="text-muted-foreground hover:text-foreground transition"
+                  >
                     About
                   </a>
                 </li>
                 <li>
-                  <a href="#" className="text-muted-foreground hover:text-foreground transition">
+                  <a
+                    href="#"
+                    className="text-muted-foreground hover:text-foreground transition"
+                  >
                     Blog
                   </a>
                 </li>
                 <li>
-                  <a href="#" className="text-muted-foreground hover:text-foreground transition">
+                  <a
+                    href="#"
+                    className="text-muted-foreground hover:text-foreground transition"
+                  >
                     Contact
                   </a>
                 </li>
@@ -327,17 +540,26 @@ export default function Page() {
               <h4 className="font-semibold text-foreground mb-4">Legal</h4>
               <ul className="space-y-2 text-sm">
                 <li>
-                  <a href="#" className="text-muted-foreground hover:text-foreground transition">
+                  <a
+                    href="#"
+                    className="text-muted-foreground hover:text-foreground transition"
+                  >
                     Privacy
                   </a>
                 </li>
                 <li>
-                  <a href="#" className="text-muted-foreground hover:text-foreground transition">
+                  <a
+                    href="#"
+                    className="text-muted-foreground hover:text-foreground transition"
+                  >
                     Terms
                   </a>
                 </li>
                 <li>
-                  <a href="#" className="text-muted-foreground hover:text-foreground transition">
+                  <a
+                    href="#"
+                    className="text-muted-foreground hover:text-foreground transition"
+                  >
                     Security
                   </a>
                 </li>
@@ -345,15 +567,26 @@ export default function Page() {
             </div>
           </div>
           <div className="flex flex-col sm:flex-row items-center justify-between pt-8">
-            <p className="text-sm text-muted-foreground">© 2025 Tahqiiq. All rights reserved.</p>
+            <p className="text-sm text-muted-foreground">
+              © 2025 Tahqiiq. All rights reserved.
+            </p>
             <div className="flex gap-4 mt-4 sm:mt-0">
-              <a href="#" className="text-muted-foreground hover:text-foreground transition">
+              <a
+                href="#"
+                className="text-muted-foreground hover:text-foreground transition"
+              >
                 Twitter
               </a>
-              <a href="#" className="text-muted-foreground hover:text-foreground transition">
+              <a
+                href="#"
+                className="text-muted-foreground hover:text-foreground transition"
+              >
                 LinkedIn
               </a>
-              <a href="#" className="text-muted-foreground hover:text-foreground transition">
+              <a
+                href="#"
+                className="text-muted-foreground hover:text-foreground transition"
+              >
                 GitHub
               </a>
             </div>
@@ -364,8 +597,153 @@ export default function Page() {
   );
 }
 
+// Login/Register Page Component
+function LoginPage({ onLogin, onRegister, onSuccess }) {
+  const [isLogin, setIsLogin] = useState(true);
+  const [username, setUsername] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setError("");
+    setIsLoading(true);
+
+    try {
+      let result;
+      if (isLogin) {
+        result = await onLogin(username, password);
+      } else {
+        if (!email) {
+          setError("Email is required for registration");
+          setIsLoading(false);
+          return;
+        }
+        result = await onRegister(username, email, password);
+        if (result.success) {
+          // Auto-login after registration
+          result = await onLogin(username, password);
+        }
+      }
+
+      if (result.success) {
+        onSuccess();
+      } else {
+        setError(result.error || "An error occurred");
+      }
+    } catch (err) {
+      setError(err.message || "An error occurred");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="max-w-md mx-auto px-4 sm:px-6 lg:px-8 py-12 sm:py-20">
+      <div className="bg-card rounded-xl border border-border/50 shadow-lg p-6 sm:p-8">
+        <div className="text-center mb-6">
+          <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-primary/10 mb-4">
+            <Shield className="w-6 h-6 text-primary" />
+          </div>
+          <h2 className="text-2xl sm:text-3xl font-bold text-foreground mb-2">
+            {isLogin ? "Welcome Back" : "Create Account"}
+          </h2>
+          <p className="text-muted-foreground">
+            {isLogin
+              ? "Sign in to access your documents"
+              : "Sign up to get started with Tahqiiq"}
+          </p>
+        </div>
+
+        {error && (
+          <div className="mb-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20 flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-destructive mt-0.5 shrink-0" />
+            <p className="text-sm text-destructive">{error}</p>
+          </div>
+        )}
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-2">
+              Username
+            </label>
+            <input
+              type="text"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              required
+              className="w-full px-4 py-2 rounded-lg border border-border bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary outline-none transition"
+              placeholder="Enter your username"
+            />
+          </div>
+
+          {!isLogin && (
+            <div>
+              <label className="block text-sm font-medium text-foreground mb-2">
+                Email
+              </label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
+                className="w-full px-4 py-2 rounded-lg border border-border bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary outline-none transition"
+                placeholder="Enter your email"
+              />
+            </div>
+          )}
+
+          <div>
+            <label className="block text-sm font-medium text-foreground mb-2">
+              Password
+            </label>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={6}
+              className="w-full px-4 py-2 rounded-lg border border-border bg-background text-foreground focus:ring-2 focus:ring-primary focus:border-primary outline-none transition"
+              placeholder="Enter your password"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={isLoading}
+            className="w-full px-4 py-3 rounded-lg bg-primary text-primary-foreground font-semibold hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+          >
+            {isLoading && <Loader2 className="w-4 h-4 animate-spin" />}
+            {isLogin ? "Sign In" : "Create Account"}
+          </button>
+        </form>
+
+        <div className="mt-6 text-center">
+          <button
+            type="button"
+            onClick={() => {
+              setIsLogin(!isLogin);
+              setError("");
+              setUsername("");
+              setEmail("");
+              setPassword("");
+            }}
+            className="text-sm text-primary hover:text-primary/80 font-medium transition"
+          >
+            {isLogin
+              ? "Don't have an account? Sign up"
+              : "Already have an account? Sign in"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // DocumentUpload component with all existing functionality
-function DocumentUpload({ onDocumentProcessed }) {
+function DocumentUpload({ onDocumentProcessed, fetchWithAuth, API_BASE_URL }) {
   const [file, setFile] = useState(null);
   const [isUploading, setIsUploading] = useState(false);
   const [uploadComplete, setUploadComplete] = useState(false);
@@ -394,7 +772,7 @@ function DocumentUpload({ onDocumentProcessed }) {
       selectedFile &&
       (selectedFile.type === "application/pdf" ||
         selectedFile.type ===
-        "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
     ) {
       if (selectedFile.size <= 10 * 1024 * 1024) {
         setFile(selectedFile);
@@ -456,7 +834,7 @@ function DocumentUpload({ onDocumentProcessed }) {
       const formData = new FormData();
       formData.append("file", file);
 
-      const response = await fetch("http://localhost:8000/upload", {
+      const response = await fetchWithAuth(`${API_BASE_URL}/upload`, {
         method: "POST",
         body: formData,
       });
@@ -466,7 +844,12 @@ function DocumentUpload({ onDocumentProcessed }) {
       }
 
       const result = await response.json();
-      const path = result?.pdf_path || result?.file_path || result?.path || result?.saved_path || "";
+      const path =
+        result?.pdf_path ||
+        result?.file_path ||
+        result?.path ||
+        result?.saved_path ||
+        "";
       setUploadedPdfPath(path);
       setUploadComplete(true);
     } catch (err) {
@@ -489,7 +872,7 @@ function DocumentUpload({ onDocumentProcessed }) {
     setPredictedClauses(null);
 
     try {
-      const response = await fetch("http://localhost:8000/predict-clauses", {
+      const response = await fetchWithAuth(`${API_BASE_URL}/predict-clauses`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pdf_path: pdfPath }),
@@ -519,7 +902,7 @@ function DocumentUpload({ onDocumentProcessed }) {
     setError(null);
 
     try {
-      const response = await fetch("http://localhost:8000/summaries/start", {
+      const response = await fetchWithAuth(`${API_BASE_URL}/summaries/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ pdf_path: uploadedPdfPath }),
@@ -539,7 +922,7 @@ function DocumentUpload({ onDocumentProcessed }) {
   const pollSummarizationStatus = async (jobId) => {
     const intervalId = setInterval(async () => {
       try {
-        const res = await fetch(`http://localhost:8000/summaries/${jobId}`);
+        const res = await fetchWithAuth(`${API_BASE_URL}/summaries/${jobId}`);
         if (!res.ok) throw new Error("Polling failed");
 
         const data = await res.json();
@@ -582,7 +965,7 @@ function DocumentUpload({ onDocumentProcessed }) {
     let jobId = summaryJobId;
     if (!jobId && uploadedPdfPath) {
       try {
-        const jobRes = await fetch("http://localhost:8000/summaries/start", {
+        const jobRes = await fetchWithAuth(`${API_BASE_URL}/summaries/start`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ pdf_path: uploadedPdfPath }),
@@ -602,11 +985,15 @@ function DocumentUpload({ onDocumentProcessed }) {
     setActiveClauseSummary(null);
     setError(null);
 
-    const prev = clauseIndex > 0 ? predictedClauses[clauseIndex - 1].clause : "";
-    const next = clauseIndex < predictedClauses.length - 1 ? predictedClauses[clauseIndex + 1].clause : "";
+    const prev =
+      clauseIndex > 0 ? predictedClauses[clauseIndex - 1].clause : "";
+    const next =
+      clauseIndex < predictedClauses.length - 1
+        ? predictedClauses[clauseIndex + 1].clause
+        : "";
 
     try {
-      const res = await fetch("http://localhost:8000/summaries/clause", {
+      const res = await fetchWithAuth(`${API_BASE_URL}/summaries/clause`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -645,7 +1032,9 @@ function DocumentUpload({ onDocumentProcessed }) {
       <div className="mt-6 sm:mt-8 bg-card rounded-xl border border-border/50 shadow-sm p-4 sm:p-6">
         <div className="flex items-center gap-2 mb-3 sm:mb-4">
           <Zap className="text-accent w-5 h-5 sm:w-6 sm:h-6" />
-          <h4 className="text-lg sm:text-xl font-bold text-foreground">On-Demand Clause Summarization</h4>
+          <h4 className="text-lg sm:text-xl font-bold text-foreground">
+            On-Demand Clause Summarization
+          </h4>
         </div>
 
         <label className="block text-sm font-medium mb-2 text-muted-foreground">
@@ -658,42 +1047,82 @@ function DocumentUpload({ onDocumentProcessed }) {
           disabled={!uploadedPdfPath}
           style={{
             backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='white' d='M6 9L1 4h10z'/%3E%3C/svg%3E")`,
-            backgroundRepeat: 'no-repeat',
-            backgroundPosition: 'right 0.75rem center',
-            paddingRight: '2.5rem'
+            backgroundRepeat: "no-repeat",
+            backgroundPosition: "right 0.75rem center",
+            paddingRight: "2.5rem",
           }}
         >
-          <option value="" className="bg-card text-foreground">-- Select a Clause --</option>
+          <option value="" className="bg-card text-foreground">
+            -- Select a Clause --
+          </option>
           {predictedClauses.map((c, idx) => (
             <option key={idx} value={idx} className="bg-card text-foreground">
-              Clause {c.clause_no || idx + 1}: {c.category} ({c.clause.substring(0, 40)}...)
+              Clause {c.clause_no || idx + 1}: {c.category} (
+              {c.clause.substring(0, 40)}...)
             </option>
           ))}
         </select>
 
         {isGeneratingClause && (
           <div className="flex items-center gap-2 text-accent text-sm animate-pulse mb-4 mt-4">
-            <Loader2 className="animate-spin" size={16} /> Generating AI analysis...
+            <Loader2 className="animate-spin" size={16} /> Generating AI
+            analysis...
           </div>
         )}
 
         {activeClauseSummary && (
           <div className="bg-accent/10 border border-accent/20 rounded-lg p-4 sm:p-5 mt-4 animate-in fade-in">
-            <h4 className="text-xs font-bold text-accent uppercase mb-3 tracking-wider">AI Interpretation</h4>
+            <h4 className="text-xs font-bold text-accent uppercase mb-3 tracking-wider">
+              AI Interpretation
+            </h4>
             <div className="prose prose-sm max-w-none text-foreground leading-relaxed">
               <ReactMarkdown
                 components={{
-                  p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
-                  strong: ({ children }) => <strong className="font-bold text-foreground">{children}</strong>,
+                  p: ({ children }) => (
+                    <p className="mb-3 last:mb-0">{children}</p>
+                  ),
+                  strong: ({ children }) => (
+                    <strong className="font-bold text-foreground">
+                      {children}
+                    </strong>
+                  ),
                   em: ({ children }) => <em className="italic">{children}</em>,
-                  ul: ({ children }) => <ul className="list-disc list-inside mb-3 space-y-1">{children}</ul>,
-                  ol: ({ children }) => <ol className="list-decimal list-inside mb-3 space-y-1">{children}</ol>,
+                  ul: ({ children }) => (
+                    <ul className="list-disc list-inside mb-3 space-y-1">
+                      {children}
+                    </ul>
+                  ),
+                  ol: ({ children }) => (
+                    <ol className="list-decimal list-inside mb-3 space-y-1">
+                      {children}
+                    </ol>
+                  ),
                   li: ({ children }) => <li className="ml-2">{children}</li>,
-                  h1: ({ children }) => <h1 className="text-lg font-bold mb-2 mt-4 first:mt-0">{children}</h1>,
-                  h2: ({ children }) => <h2 className="text-base font-bold mb-2 mt-3 first:mt-0">{children}</h2>,
-                  h3: ({ children }) => <h3 className="text-sm font-bold mb-1 mt-2 first:mt-0">{children}</h3>,
-                  code: ({ children }) => <code className="bg-accent/20 px-1.5 py-0.5 rounded text-xs font-mono text-accent">{children}</code>,
-                  blockquote: ({ children }) => <blockquote className="border-l-4 border-accent/40 pl-3 italic my-2">{children}</blockquote>,
+                  h1: ({ children }) => (
+                    <h1 className="text-lg font-bold mb-2 mt-4 first:mt-0">
+                      {children}
+                    </h1>
+                  ),
+                  h2: ({ children }) => (
+                    <h2 className="text-base font-bold mb-2 mt-3 first:mt-0">
+                      {children}
+                    </h2>
+                  ),
+                  h3: ({ children }) => (
+                    <h3 className="text-sm font-bold mb-1 mt-2 first:mt-0">
+                      {children}
+                    </h3>
+                  ),
+                  code: ({ children }) => (
+                    <code className="bg-accent/20 px-1.5 py-0.5 rounded text-xs font-mono text-accent">
+                      {children}
+                    </code>
+                  ),
+                  blockquote: ({ children }) => (
+                    <blockquote className="border-l-4 border-accent/40 pl-3 italic my-2">
+                      {children}
+                    </blockquote>
+                  ),
                 }}
               >
                 {activeClauseSummary}
@@ -702,11 +1131,13 @@ function DocumentUpload({ onDocumentProcessed }) {
           </div>
         )}
 
-        {selectedClauseIndex !== "" && !isGeneratingClause && !activeClauseSummary && (
-          <div className="text-sm text-muted-foreground italic mt-4">
-            No summary available for selected clause.
-          </div>
-        )}
+        {selectedClauseIndex !== "" &&
+          !isGeneratingClause &&
+          !activeClauseSummary && (
+            <div className="text-sm text-muted-foreground italic mt-4">
+              No summary available for selected clause.
+            </div>
+          )}
       </div>
     );
   };
@@ -723,26 +1154,66 @@ function DocumentUpload({ onDocumentProcessed }) {
             <FileText className="w-5 h-5 text-primary" />
             AI Summary Report
           </h4>
-          <span className="text-xs text-muted-foreground font-mono bg-muted px-2 py-1 rounded">Model: {model_version}</span>
+          <span className="text-xs text-muted-foreground font-mono bg-muted px-2 py-1 rounded">
+            Model: {model_version}
+          </span>
         </div>
 
         {/* Executive Summary Card */}
         <div className="bg-gradient-to-br from-primary/5 via-card to-accent/5 rounded-xl border border-border/50 p-5 sm:p-6 shadow-sm">
-          <h5 className="text-sm font-bold text-primary uppercase tracking-wider mb-4">Executive Summary</h5>
+          <h5 className="text-sm font-bold text-primary uppercase tracking-wider mb-4">
+            Executive Summary
+          </h5>
           <div className="prose prose-sm sm:prose-base max-w-none text-foreground leading-relaxed">
             <ReactMarkdown
               components={{
-                p: ({ children }) => <p className="mb-4 last:mb-0 text-sm sm:text-base">{children}</p>,
-                strong: ({ children }) => <strong className="font-bold text-foreground">{children}</strong>,
+                p: ({ children }) => (
+                  <p className="mb-4 last:mb-0 text-sm sm:text-base">
+                    {children}
+                  </p>
+                ),
+                strong: ({ children }) => (
+                  <strong className="font-bold text-foreground">
+                    {children}
+                  </strong>
+                ),
                 em: ({ children }) => <em className="italic">{children}</em>,
-                ul: ({ children }) => <ul className="list-disc list-inside mb-4 space-y-2 ml-2">{children}</ul>,
-                ol: ({ children }) => <ol className="list-decimal list-inside mb-4 space-y-2 ml-2">{children}</ol>,
+                ul: ({ children }) => (
+                  <ul className="list-disc list-inside mb-4 space-y-2 ml-2">
+                    {children}
+                  </ul>
+                ),
+                ol: ({ children }) => (
+                  <ol className="list-decimal list-inside mb-4 space-y-2 ml-2">
+                    {children}
+                  </ol>
+                ),
                 li: ({ children }) => <li className="ml-1">{children}</li>,
-                h1: ({ children }) => <h1 className="text-xl sm:text-2xl font-bold mb-3 mt-6 first:mt-0 text-foreground">{children}</h1>,
-                h2: ({ children }) => <h2 className="text-lg sm:text-xl font-bold mb-2 mt-5 first:mt-0 text-foreground">{children}</h2>,
-                h3: ({ children }) => <h3 className="text-base sm:text-lg font-bold mb-2 mt-4 first:mt-0 text-foreground">{children}</h3>,
-                code: ({ children }) => <code className="bg-primary/10 px-2 py-1 rounded text-xs sm:text-sm font-mono text-primary">{children}</code>,
-                blockquote: ({ children }) => <blockquote className="border-l-4 border-primary/40 pl-4 italic my-3 text-muted-foreground">{children}</blockquote>,
+                h1: ({ children }) => (
+                  <h1 className="text-xl sm:text-2xl font-bold mb-3 mt-6 first:mt-0 text-foreground">
+                    {children}
+                  </h1>
+                ),
+                h2: ({ children }) => (
+                  <h2 className="text-lg sm:text-xl font-bold mb-2 mt-5 first:mt-0 text-foreground">
+                    {children}
+                  </h2>
+                ),
+                h3: ({ children }) => (
+                  <h3 className="text-base sm:text-lg font-bold mb-2 mt-4 first:mt-0 text-foreground">
+                    {children}
+                  </h3>
+                ),
+                code: ({ children }) => (
+                  <code className="bg-primary/10 px-2 py-1 rounded text-xs sm:text-sm font-mono text-primary">
+                    {children}
+                  </code>
+                ),
+                blockquote: ({ children }) => (
+                  <blockquote className="border-l-4 border-primary/40 pl-4 italic my-3 text-muted-foreground">
+                    {children}
+                  </blockquote>
+                ),
                 hr: () => <hr className="my-4 border-border" />,
               }}
             >
@@ -755,24 +1226,41 @@ function DocumentUpload({ onDocumentProcessed }) {
         {clause_summaries && clause_summaries.length > 0 && (
           <div className="bg-card rounded-xl border border-border/50 shadow-sm overflow-hidden">
             <div className="px-4 sm:px-6 py-3 sm:py-4 border-b border-border/50 bg-muted/30 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-2">
-              <h5 className="font-semibold text-foreground text-sm sm:text-base">Clause Breakdown</h5>
-              <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full">{clause_summaries.length} clauses processed</span>
+              <h5 className="font-semibold text-foreground text-sm sm:text-base">
+                Clause Breakdown
+              </h5>
+              <span className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded-full">
+                {clause_summaries.length} clauses processed
+              </span>
             </div>
 
             <div className="overflow-x-auto">
               <table className="min-w-full text-xs sm:text-sm">
                 <thead className="bg-card text-muted-foreground border-b border-border/50">
                   <tr>
-                    <th className="px-3 sm:px-6 py-2 sm:py-3 text-left w-12 sm:w-16 text-xs sm:text-sm">#</th>
-                    <th className="px-3 sm:px-6 py-2 sm:py-3 text-left w-1/4 text-xs sm:text-sm">Category</th>
-                    <th className="px-3 sm:px-6 py-2 sm:py-3 text-left text-xs sm:text-sm">Summary</th>
-                    <th className="px-3 sm:px-6 py-2 sm:py-3 text-right text-xs sm:text-sm">Status</th>
+                    <th className="px-3 sm:px-6 py-2 sm:py-3 text-left w-12 sm:w-16 text-xs sm:text-sm">
+                      #
+                    </th>
+                    <th className="px-3 sm:px-6 py-2 sm:py-3 text-left w-1/4 text-xs sm:text-sm">
+                      Category
+                    </th>
+                    <th className="px-3 sm:px-6 py-2 sm:py-3 text-left text-xs sm:text-sm">
+                      Summary
+                    </th>
+                    <th className="px-3 sm:px-6 py-2 sm:py-3 text-right text-xs sm:text-sm">
+                      Status
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border/50">
                   {clause_summaries.map((item, idx) => (
-                    <tr key={idx} className="hover:bg-muted/30 transition-colors group">
-                      <td className="px-3 sm:px-6 py-3 sm:py-4 font-mono text-muted-foreground text-xs sm:text-sm">{item.clause_no}</td>
+                    <tr
+                      key={idx}
+                      className="hover:bg-muted/30 transition-colors group"
+                    >
+                      <td className="px-3 sm:px-6 py-3 sm:py-4 font-mono text-muted-foreground text-xs sm:text-sm">
+                        {item.clause_no}
+                      </td>
                       <td className="px-3 sm:px-6 py-3 sm:py-4">
                         <span className="inline-flex items-center px-2 sm:px-2.5 py-0.5 rounded-full text-xs font-medium bg-muted text-foreground">
                           {item.category}
@@ -783,13 +1271,35 @@ function DocumentUpload({ onDocumentProcessed }) {
                           <div className="prose prose-sm max-w-none text-foreground leading-relaxed">
                             <ReactMarkdown
                               components={{
-                                p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
-                                strong: ({ children }) => <strong className="font-bold text-foreground">{children}</strong>,
-                                em: ({ children }) => <em className="italic">{children}</em>,
-                                ul: ({ children }) => <ul className="list-disc list-inside mb-2 space-y-1 ml-2">{children}</ul>,
-                                ol: ({ children }) => <ol className="list-decimal list-inside mb-2 space-y-1 ml-2">{children}</ol>,
-                                li: ({ children }) => <li className="ml-1">{children}</li>,
-                                code: ({ children }) => <code className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono">{children}</code>,
+                                p: ({ children }) => (
+                                  <p className="mb-2 last:mb-0">{children}</p>
+                                ),
+                                strong: ({ children }) => (
+                                  <strong className="font-bold text-foreground">
+                                    {children}
+                                  </strong>
+                                ),
+                                em: ({ children }) => (
+                                  <em className="italic">{children}</em>
+                                ),
+                                ul: ({ children }) => (
+                                  <ul className="list-disc list-inside mb-2 space-y-1 ml-2">
+                                    {children}
+                                  </ul>
+                                ),
+                                ol: ({ children }) => (
+                                  <ol className="list-decimal list-inside mb-2 space-y-1 ml-2">
+                                    {children}
+                                  </ol>
+                                ),
+                                li: ({ children }) => (
+                                  <li className="ml-1">{children}</li>
+                                ),
+                                code: ({ children }) => (
+                                  <code className="bg-muted px-1.5 py-0.5 rounded text-xs font-mono">
+                                    {children}
+                                  </code>
+                                ),
                               }}
                             >
                               {item.summary_text}
@@ -800,8 +1310,14 @@ function DocumentUpload({ onDocumentProcessed }) {
                             onClick={() => toggleSummaryRow(idx)}
                             className="text-xs text-primary hover:text-primary/80 flex items-center gap-1 font-medium"
                           >
-                            {expandedSummaryRows[idx] ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                            {expandedSummaryRows[idx] ? "Hide Original Text" : "Show Original Text"}
+                            {expandedSummaryRows[idx] ? (
+                              <ChevronDown size={14} />
+                            ) : (
+                              <ChevronRight size={14} />
+                            )}
+                            {expandedSummaryRows[idx]
+                              ? "Hide Original Text"
+                              : "Show Original Text"}
                           </button>
                           {expandedSummaryRows[idx] && (
                             <div className="mt-2 p-3 bg-muted/30 rounded-lg border border-border/50 text-xs text-muted-foreground italic">
@@ -812,9 +1328,13 @@ function DocumentUpload({ onDocumentProcessed }) {
                       </td>
                       <td className="px-3 sm:px-6 py-3 sm:py-4 text-right">
                         {item.is_failed ? (
-                          <span className="text-destructive flex items-center justify-end gap-1 text-xs"><AlertTriangle size={14} /> Failed</span>
+                          <span className="text-destructive flex items-center justify-end gap-1 text-xs">
+                            <AlertTriangle size={14} /> Failed
+                          </span>
                         ) : (
-                          <span className="text-secondary flex items-center justify-end gap-1 text-xs"><CheckCircle size={14} /> Ready</span>
+                          <span className="text-secondary flex items-center justify-end gap-1 text-xs">
+                            <CheckCircle size={14} /> Ready
+                          </span>
                         )}
                       </td>
                     </tr>
@@ -835,11 +1355,11 @@ function DocumentUpload({ onDocumentProcessed }) {
 
     const filteredClauses = predictedClauses
       ? predictedClauses.filter((item) => {
-        const keyword = searchKeyword.toLowerCase();
-        const clauseText = (item?.clause || "").toLowerCase();
-        const categoryText = (item?.category || "").toLowerCase();
-        return clauseText.includes(keyword) || categoryText.includes(keyword);
-      })
+          const keyword = searchKeyword.toLowerCase();
+          const clauseText = (item?.clause || "").toLowerCase();
+          const categoryText = (item?.category || "").toLowerCase();
+          return clauseText.includes(keyword) || categoryText.includes(keyword);
+        })
       : [];
 
     return (
@@ -866,18 +1386,27 @@ function DocumentUpload({ onDocumentProcessed }) {
             <table className="min-w-full text-xs sm:text-sm">
               <thead className="bg-muted/30 text-foreground sticky top-0 z-10">
                 <tr>
-                  <th className="px-2 sm:px-4 py-2 sm:py-3 text-left font-medium border-b border-border/50 text-xs sm:text-sm">Text Snippet</th>
-                  <th className="px-2 sm:px-4 py-2 sm:py-3 text-left font-medium border-b border-border/50 text-xs sm:text-sm">Category</th>
+                  <th className="px-2 sm:px-4 py-2 sm:py-3 text-left font-medium border-b border-border/50 text-xs sm:text-sm">
+                    Text Snippet
+                  </th>
+                  <th className="px-2 sm:px-4 py-2 sm:py-3 text-left font-medium border-b border-border/50 text-xs sm:text-sm">
+                    Category
+                  </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50">
                 {filteredClauses.map((item, index) => (
                   <tr key={`pred-${index}`} className="hover:bg-muted/30">
                     <td className="px-2 sm:px-4 py-2 sm:py-3 text-muted-foreground w-2/3 text-xs sm:text-sm">
-                      {item.clause.length > 100 ? `${item.clause.substring(0, 100)}...` : item.clause}
+                      {item.clause.length > 100
+                        ? `${item.clause.substring(0, 100)}...`
+                        : item.clause}
                     </td>
                     <td className="px-2 sm:px-4 py-2 sm:py-3 w-1/3">
-                      <CategoryViewer clause_no={item.clause_no} category={item.category} />
+                      <CategoryViewer
+                        clause_no={item.clause_no}
+                        category={item.category}
+                      />
                     </td>
                   </tr>
                 ))}
@@ -889,10 +1418,15 @@ function DocumentUpload({ onDocumentProcessed }) {
         {isPDF && predictedClauses.length > 0 && (
           <div className="mt-4 sm:mt-6 space-y-4">
             <div className="border-t border-border/50 pt-4 sm:pt-6">
-              <h5 className="font-medium text-foreground mb-3 sm:mb-4 text-sm sm:text-base">PDF Visualization</h5>
+              <h5 className="font-medium text-foreground mb-3 sm:mb-4 text-sm sm:text-base">
+                PDF Visualization
+              </h5>
               <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 sm:gap-6">
                 <div className="lg:col-span-3 border border-border/50 rounded-lg overflow-hidden h-[400px] sm:h-[500px] lg:h-[600px]">
-                  <PDFViewerWithHighlights file={file} predictedClauses={predictedClauses} />
+                  <PDFViewerWithHighlights
+                    file={file}
+                    predictedClauses={predictedClauses}
+                  />
                 </div>
                 <div className="lg:col-span-2">
                   <ClauseLegend predictedClauses={predictedClauses} />
@@ -917,8 +1451,11 @@ function DocumentUpload({ onDocumentProcessed }) {
 
       {/* Upload Area */}
       <div
-        className={`border-2 border-dashed rounded-xl p-8 sm:p-12 transition-all ${isDragOver ? "border-primary bg-primary/10" : "border-border/50 bg-muted/30"
-          }`}
+        className={`border-2 border-dashed rounded-xl p-8 sm:p-12 transition-all ${
+          isDragOver
+            ? "border-primary bg-primary/10"
+            : "border-border/50 bg-muted/30"
+        }`}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -933,7 +1470,9 @@ function DocumentUpload({ onDocumentProcessed }) {
             {file ? file.name : "Upload your document"}
           </h3>
           <p className="text-sm text-muted-foreground mb-6">
-            {file ? "Ready to process" : "Drag and drop your PDF or DOCX file here"}
+            {file
+              ? "Ready to process"
+              : "Drag and drop your PDF or DOCX file here"}
           </p>
           <div className="flex gap-2 justify-center flex-wrap">
             <button
@@ -952,7 +1491,13 @@ function DocumentUpload({ onDocumentProcessed }) {
             )}
           </div>
         </div>
-        <input ref={fileInputRef} type="file" onChange={handleFileInputChange} className="hidden" accept=".pdf,.docx" />
+        <input
+          ref={fileInputRef}
+          type="file"
+          onChange={handleFileInputChange}
+          className="hidden"
+          accept=".pdf,.docx"
+        />
       </div>
 
       {/* Action Buttons */}
@@ -990,7 +1535,9 @@ function DocumentUpload({ onDocumentProcessed }) {
         <div className="bg-card rounded-xl border border-border/50 shadow-sm p-4 sm:p-6">
           <div className="flex items-center gap-2 mb-3 sm:mb-4">
             <Zap className="text-accent w-5 h-5 sm:w-6 sm:h-6" />
-            <h4 className="text-lg sm:text-xl font-bold text-foreground">On-Demand Clause Summarization</h4>
+            <h4 className="text-lg sm:text-xl font-bold text-foreground">
+              On-Demand Clause Summarization
+            </h4>
           </div>
           <label className="block text-sm font-medium mb-2 text-muted-foreground">
             Select a clause to generate instant AI summary:
@@ -1002,12 +1549,14 @@ function DocumentUpload({ onDocumentProcessed }) {
             disabled={!uploadedPdfPath}
             style={{
               backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='white' d='M6 9L1 4h10z'/%3E%3C/svg%3E")`,
-              backgroundRepeat: 'no-repeat',
-              backgroundPosition: 'right 0.75rem center',
-              paddingRight: '2.5rem'
+              backgroundRepeat: "no-repeat",
+              backgroundPosition: "right 0.75rem center",
+              paddingRight: "2.5rem",
             }}
           >
-            <option value="" className="bg-card text-foreground">-- Select a Clause --</option>
+            <option value="" className="bg-card text-foreground">
+              -- Select a Clause --
+            </option>
             {predictedClauses.map((c, idx) => (
               <option key={idx} value={idx} className="bg-card text-foreground">
                 Clause {c.clause_no || idx + 1}: {c.category}
@@ -1017,27 +1566,66 @@ function DocumentUpload({ onDocumentProcessed }) {
 
           {isGeneratingClause && (
             <div className="flex items-center gap-2 text-accent text-sm animate-pulse mb-4 mt-4">
-              <Loader2 className="animate-spin" size={16} /> Generating AI analysis...
+              <Loader2 className="animate-spin" size={16} /> Generating AI
+              analysis...
             </div>
           )}
 
           {activeClauseSummary && (
             <div className="bg-accent/10 border border-accent/20 rounded-lg p-4 sm:p-5 mt-4 animate-in fade-in">
-              <h4 className="text-xs font-bold text-accent uppercase mb-3 tracking-wider">AI Interpretation</h4>
+              <h4 className="text-xs font-bold text-accent uppercase mb-3 tracking-wider">
+                AI Interpretation
+              </h4>
               <div className="prose prose-sm max-w-none text-foreground leading-relaxed">
                 <ReactMarkdown
                   components={{
-                    p: ({ children }) => <p className="mb-3 last:mb-0">{children}</p>,
-                    strong: ({ children }) => <strong className="font-bold text-foreground">{children}</strong>,
-                    em: ({ children }) => <em className="italic">{children}</em>,
-                    ul: ({ children }) => <ul className="list-disc list-inside mb-3 space-y-1">{children}</ul>,
-                    ol: ({ children }) => <ol className="list-decimal list-inside mb-3 space-y-1">{children}</ol>,
+                    p: ({ children }) => (
+                      <p className="mb-3 last:mb-0">{children}</p>
+                    ),
+                    strong: ({ children }) => (
+                      <strong className="font-bold text-foreground">
+                        {children}
+                      </strong>
+                    ),
+                    em: ({ children }) => (
+                      <em className="italic">{children}</em>
+                    ),
+                    ul: ({ children }) => (
+                      <ul className="list-disc list-inside mb-3 space-y-1">
+                        {children}
+                      </ul>
+                    ),
+                    ol: ({ children }) => (
+                      <ol className="list-decimal list-inside mb-3 space-y-1">
+                        {children}
+                      </ol>
+                    ),
                     li: ({ children }) => <li className="ml-2">{children}</li>,
-                    h1: ({ children }) => <h1 className="text-lg font-bold mb-2 mt-4 first:mt-0">{children}</h1>,
-                    h2: ({ children }) => <h2 className="text-base font-bold mb-2 mt-3 first:mt-0">{children}</h2>,
-                    h3: ({ children }) => <h3 className="text-sm font-bold mb-1 mt-2 first:mt-0">{children}</h3>,
-                    code: ({ children }) => <code className="bg-accent/20 px-1.5 py-0.5 rounded text-xs font-mono text-accent">{children}</code>,
-                    blockquote: ({ children }) => <blockquote className="border-l-4 border-accent/40 pl-3 italic my-2">{children}</blockquote>,
+                    h1: ({ children }) => (
+                      <h1 className="text-lg font-bold mb-2 mt-4 first:mt-0">
+                        {children}
+                      </h1>
+                    ),
+                    h2: ({ children }) => (
+                      <h2 className="text-base font-bold mb-2 mt-3 first:mt-0">
+                        {children}
+                      </h2>
+                    ),
+                    h3: ({ children }) => (
+                      <h3 className="text-sm font-bold mb-1 mt-2 first:mt-0">
+                        {children}
+                      </h3>
+                    ),
+                    code: ({ children }) => (
+                      <code className="bg-accent/20 px-1.5 py-0.5 rounded text-xs font-mono text-accent">
+                        {children}
+                      </code>
+                    ),
+                    blockquote: ({ children }) => (
+                      <blockquote className="border-l-4 border-accent/40 pl-3 italic my-2">
+                        {children}
+                      </blockquote>
+                    ),
                   }}
                 >
                   {activeClauseSummary}
