@@ -3,6 +3,7 @@ import ReactMarkdown from "react-markdown";
 import PDFViewerWithHighlights from "./components/pdf-viewer";
 import ClauseLegend from "./components/clause-legend";
 import CategoryViewer from "./components/category-viewer";
+import Chatbot from "./components/chatbot";
 import {
   FileText,
   Activity,
@@ -19,6 +20,7 @@ import {
   LogIn,
   User,
   LogOut,
+  MessageCircle,
 } from "lucide-react";
 
 const API_BASE_URL = "http://localhost:8000";
@@ -31,6 +33,10 @@ export default function Page() {
   const [token, setToken] = useState(localStorage.getItem("token") || null);
   const [user, setUser] = useState(null);
   const [isAuthenticated, setIsAuthenticated] = useState(!!token);
+
+  // Chat state
+  const [currentChatJobId, setCurrentChatJobId] = useState(null);
+  const [currentChatDocumentTitle, setCurrentChatDocumentTitle] = useState("");
 
   const handleLogout = () => {
     setToken(null);
@@ -444,22 +450,55 @@ export default function Page() {
               <div className="flex gap-1 py-4 overflow-x-auto">
                 <button
                   onClick={() => setActiveTab("upload")}
-                  className="px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-all bg-primary text-primary-foreground"
+                  className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-all flex items-center gap-2 ${
+                    activeTab === "upload"
+                      ? "bg-primary text-primary-foreground"
+                      : "text-foreground hover:bg-muted"
+                  }`}
                 >
+                  <FileText className="w-4 h-4" />
                   Upload & Analyze
                 </button>
+                {currentChatJobId && (
+                  <button
+                    onClick={() => setActiveTab("chat")}
+                    className={`px-4 py-2 rounded-lg font-medium whitespace-nowrap transition-all flex items-center gap-2 ${
+                      activeTab === "chat"
+                        ? "bg-primary text-primary-foreground"
+                        : "text-foreground hover:bg-muted"
+                    }`}
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    Chat with Document
+                  </button>
+                )}
               </div>
             </div>
           </div>
 
           {/* Application Content */}
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
-            <DocumentUpload
-              onDocumentProcessed={() => setDocumentCount((c) => c + 1)}
-              fetchWithAuth={fetchWithAuth}
-              API_BASE_URL={API_BASE_URL}
-            />
-          </div>
+          {activeTab === "upload" ? (
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 sm:py-12">
+              <DocumentUpload
+                onDocumentProcessed={(jobId, documentTitle) => {
+                  setDocumentCount((c) => c + 1);
+                  setCurrentChatJobId(jobId);
+                  setCurrentChatDocumentTitle(documentTitle);
+                  setActiveTab("chat");
+                }}
+                fetchWithAuth={fetchWithAuth}
+                API_BASE_URL={API_BASE_URL}
+              />
+            </div>
+          ) : (
+            <div className="h-[calc(100vh-200px)]">
+              <Chatbot
+                jobId={currentChatJobId}
+                token={token}
+                documentTitle={currentChatDocumentTitle}
+              />
+            </div>
+          )}
         </>
       )}
 
@@ -931,7 +970,7 @@ function DocumentUpload({ onDocumentProcessed, fetchWithAuth, API_BASE_URL }) {
           setSummaryResult(data);
           setIsSummarizing(false);
           clearInterval(intervalId);
-          onDocumentProcessed?.();
+          onDocumentProcessed?.(jobId, file?.name || "Document");
         } else if (data.status === "FAILED") {
           setError(`Summarization failed: ${data.error || "Unknown error"}`);
           setIsSummarizing(false);

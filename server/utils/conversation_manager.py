@@ -109,22 +109,22 @@ class ConversationManager:
             
             result = await self.messages.insert_one(message)
             
-            # Update conversation metadata
-            update_data = {
-                "updated_at": datetime.utcnow(),
-                "$inc": {"message_count": 1}
-            }
+            # Fields to set
+            set_fields = {"updated_at": datetime.utcnow()}
             
             # Auto-generate title from first user message
             if role == "user":
                 conv = await self.conversations.find_one({"_id": conv_oid})
                 if conv and conv.get("message_count", 0) == 0:
                     title = content[:50] + "..." if len(content) > 50 else content
-                    update_data["title"] = title
+                    set_fields["title"] = title
             
             await self.conversations.update_one(
                 {"_id": conv_oid},
-                {"$set": update_data}
+                {
+                    "$set": set_fields,
+                    "$inc": {"message_count": 1}
+                }
             )
             
             return str(result.inserted_id)

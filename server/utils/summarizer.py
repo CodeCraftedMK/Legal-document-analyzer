@@ -1,5 +1,6 @@
 import os
 from typing import List, Tuple, Optional
+import asyncio
 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
@@ -17,10 +18,10 @@ PROMPT_VERSION = os.getenv("LLM_PROMPT_VERSION", "v3.0-map-reduce")
 # LLM Client
 # -----------------------------------------------------------------------------
 llm = ChatOllama(
-    model=os.getenv("LLM_MODEL_NAME", "tinyllama"),
+    model=os.getenv("LLM_MODEL_NAME", "llama3.2:3b-instruct-q4_K_M"),
     temperature=0.1,
     base_url=os.getenv("OLLAMA_BASE_URL", "http://localhost:11434"),
-    num_ctx=8192 # Ensure context window is large enough for chunks
+    num_ctx=32768 # Ensure context window is large enough for chunks
 )
 
 # -----------------------------------------------------------------------------
@@ -111,7 +112,16 @@ async def generate_clause_summary(
         print(f"Clause Error: {exc}")
         return "Summary unavailable.", True
 
-async def generate_general_summary_map_reduce(full_doc_text: str) -> str:
+async def _summarize_chunk(idx: int, doc, total: int) -> str | None:
+    try:
+        print(f"  📝 Summarizing chunk {idx + 1}/{total}...")
+        summary = await map_chain.ainvoke({"text": doc.page_content})
+        return summary.strip() if summary and summary.strip() else None
+    except Exception as e:
+        print(f"  ❌ Error on chunk {idx + 1}: {e}")
+        return None
+
+async def generate_general_summary(full_doc_text: str) -> str:
     """
     Splits the FULL document text into chunks, summarizes each, 
     and then aggregates them into an Executive Summary.
@@ -124,56 +134,21 @@ async def generate_general_summary_map_reduce(full_doc_text: str) -> str:
         print(f"⚠️ Text too short for summarization: {len(full_doc_text)} chars")
         return "Document text is too short to generate a meaningful summary."
     
+    prompt = f"""You are a Senior Legal Partner. Analyze this contract and provide a professional Executive Summary.
+
+CONTRACT:
+{full_doc_text}
+
+FORMAT:
+- **Core Purpose**: The main goal of the agreement.
+- **Key Terms**: Financials, dates, and major deliverables.
+- **Critical Risks**: Liabilities, indemnities, and termination rights.
+
+Executive Summary:
+"""
     try:
-        # 1. Split text into chunks (Llama 3 has 8k context, so 4k chunks are safe)
-        print(f"📄 Starting Map-Reduce summarization. Document length: {len(full_doc_text)} characters")
-        text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=4000,
-            chunk_overlap=200,
-            separators=["\n\n", "\n", ". ", " ", ""]
-        )
-        docs = text_splitter.create_documents([full_doc_text])
-        print(f"📄 Split document into {len(docs)} chunks for general summarization.")
-
-        if not docs or len(docs) == 0:
-            print("⚠️ No chunks created from document")
-            return "Unable to split document into processable chunks."
-
-        # 2. MAP: Summarize each chunk
-        chunk_summaries = []
-        for idx, doc in enumerate(docs):
-            try:
-                print(f"  📝 Summarizing chunk {idx + 1}/{len(docs)}...")
-                summary = await map_chain.ainvoke({"text": doc.page_content})
-                if summary and summary.strip():
-                    chunk_summaries.append(summary.strip())
-                else:
-                    print(f"  ⚠️ Chunk {idx + 1} returned empty summary")
-            except Exception as chunk_error:
-                print(f"  ❌ Error summarizing chunk {idx + 1}: {chunk_error}")
-                import traceback
-                traceback.print_exc()
-                # Continue with other chunks even if one fails
-
-        if not chunk_summaries:
-            print("❌ No chunk summaries generated")
-            return "Failed to generate summaries for document chunks."
-
-        print(f"✅ Generated {len(chunk_summaries)} chunk summaries")
-
-        # 3. REDUCE: Combine summaries
-        combined_text = "\n\n".join(chunk_summaries)
-        print(f"🔄 Combining {len(chunk_summaries)} summaries into executive summary...")
-        final_summary = await reduce_chain.ainvoke({"text": combined_text})
-        
-        if not final_summary or not final_summary.strip():
-            print("⚠️ Reduce step returned empty summary")
-            return "Failed to generate final executive summary."
-        
-        print("✅ Executive summary generated successfully")
-        return final_summary.strip()
-    except Exception as exc:
-        print(f"❌ General Summary Error: {exc}")
-        import traceback
-        traceback.print_exc()
-        return f"Executive summary unavailable due to processing error: {str(exc)}"
+        result = await llm.ainvoke(prompt)
+        return result.content.strip()
+    except Exception as e:
+        print(f"❌ Summary error: {e}")
+        return "Summary unavailable."
